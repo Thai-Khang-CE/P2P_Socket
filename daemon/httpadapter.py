@@ -34,6 +34,8 @@ class HttpAdapter:
 
     SUPPORTED_METHODS = {"GET", "POST", "PUT", "DELETE"}
     BUFFER_SIZE = 4096
+    READ_TIMEOUT = 15
+    MAX_BODY_BYTES = 1024 * 1024
 
     def __init__(self, ip, port, conn, connaddr, routes):
         self.ip = ip
@@ -75,11 +77,19 @@ class HttpAdapter:
         for line in header_text.split("\r\n")[1:]:
             if line.lower().startswith("content-length:"):
                 try:
-                    return int(line.split(":", 1)[1].strip())
+                    content_length = int(line.split(":", 1)[1].strip())
                 except ValueError:
                     LOGGER.warning("Invalid Content-Length header: %s", line)
                     return 0
+                if content_length > self.MAX_BODY_BYTES:
+                    raise ValueError("request body too large")
+                return content_length
         return 0
+
+    def _request_error_response(self, resp, exc):
+        if str(exc) == "request body too large":
+            return resp.build_error(413, "413 Payload Too Large")
+        return resp.build_error(400, "400 Bad Request")
 
     def _dispatch_route(self, req, resp):
         if req.method not in self.SUPPORTED_METHODS:
@@ -163,12 +173,19 @@ class HttpAdapter:
             response = self._dispatch_route(req, resp)
         except ValueError as exc:
             LOGGER.warning("Bad request from %s: %s", addr, exc)
-            response = resp.build_error(400, "400 Bad Request")
+            response = self._request_error_response(resp, exc)
         except Exception:
             LOGGER.exception("Unhandled error while serving %s", addr)
             response = resp.build_error(500, "500 Internal Server Error")
 
-        conn.sendall(response)
+        try:
+            conn.sendall(response)
+        except OSError:
+            LOGGER.warning("Client disconnected before response was sent: %s", addr)
+        try:
+            conn.shutdown(2)
+        except OSError:
+            pass
         conn.close()
         LOGGER.info("Closed connection from %s", addr)
 
@@ -180,21 +197,33 @@ class HttpAdapter:
         LOGGER.info("Async accepted connection from %s", addr)
 
         try:
-            msg = await self._read_http_message_async(reader)
+            msg = await asyncio.wait_for(
+                self._read_http_message_async(reader),
+                timeout=self.READ_TIMEOUT,
+            )
             req.prepare(msg, self.routes)
             req.connaddr = addr
             response = await self._dispatch_route_async(req, resp)
+        except asyncio.TimeoutError:
+            LOGGER.warning("Async request timeout from %s", addr)
+            response = resp.build_error(408, "408 Request Timeout")
         except ValueError as exc:
             LOGGER.warning("Bad async request from %s: %s", addr, exc)
-            response = resp.build_error(400, "400 Bad Request")
+            response = self._request_error_response(resp, exc)
         except Exception:
             LOGGER.exception("Unhandled async error while serving %s", addr)
             response = resp.build_error(500, "500 Internal Server Error")
 
-        writer.write(response)
-        await writer.drain()
+        try:
+            writer.write(response)
+            await writer.drain()
+        except (ConnectionError, OSError):
+            LOGGER.warning("Async client disconnected before response: %s", addr)
         writer.close()
-        await writer.wait_closed()
+        try:
+            await writer.wait_closed()
+        except OSError:
+            LOGGER.debug("Socket already closed for %s", addr)
         LOGGER.info("Async closed connection from %s", addr)
 
     async def _read_http_message_async(self, reader):
