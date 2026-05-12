@@ -12,76 +12,205 @@
 # while attending the course
 #
 
-
 """
 app.sampleapp
 ~~~~~~~~~~~~~~~~~
 
+Sample REST app with Phase 3 cookie-based session authentication.
 """
 
-import sys
-import os
-import importlib.util
 import json
+import secrets
+import time
+from urllib.parse import parse_qs
 
 from daemon import AsynapRous
 
 app = AsynapRous()
 
-@app.route('/login', methods=['PUT'])
-def login(headers="guest", body="anonymous"):
-    """
-    Handle user login via PUT request.
+SESSION_COOKIE = "session_id"
+SESSION_TTL_SECONDS = 3600
 
-    This route simulates a login process and prints the provided headers and body
-    to the console.
+USERS = {
+    "alice": {
+        "password": "wonderland",
+        "role": "user",
+    },
+    "admin": {
+        "password": "admin123",
+        "role": "admin",
+    },
+}
 
-    :param headers (str): The request headers or user identifier.
-    :param body (str): The request body or login payload.
-    """
-    print("[SampleApp] Logging in {} to {}".format(headers, body))
-    data = {"message": "Welcome to the RESTful TCP WebApp"}
+SESSIONS = {}
 
-    # Convert to JSON string
-    json_str = json.dumps(data)
-    return (json_str.encode("utf-8"))
+
+def json_response(body, status=200, headers=None):
+    return {
+        "status": status,
+        "headers": headers or {},
+        "body": body,
+        "content_type": "application/json; charset=utf-8",
+    }
+
+
+def parse_body(body, headers):
+    content_type = headers.get("Content-Type", "")
+    if not body:
+        return {}
+    if "application/json" in content_type:
+        try:
+            return json.loads(body)
+        except json.JSONDecodeError:
+            return {}
+    parsed = parse_qs(body, keep_blank_values=True)
+    return {key: values[0] if values else "" for key, values in parsed.items()}
+
+
+def create_session(username):
+    session_id = secrets.token_urlsafe(32)
+    SESSIONS[session_id] = {
+        "username": username,
+        "role": USERS[username]["role"],
+        "created_at": time.time(),
+    }
+    return session_id
+
+
+def get_session(request):
+    session_id = request.cookies.get(SESSION_COOKIE)
+    if not session_id:
+        return None
+
+    session = SESSIONS.get(session_id)
+    if not session:
+        return None
+
+    if time.time() - session["created_at"] > SESSION_TTL_SECONDS:
+        SESSIONS.pop(session_id, None)
+        return None
+
+    return session
+
+
+def require_user(request):
+    session = get_session(request)
+    if not session:
+        return None, json_response(
+            {"error": "Unauthorized", "message": "Login required"},
+            status=401,
+        )
+    return session, None
+
+
+def require_role(request, role):
+    session, error = require_user(request)
+    if error:
+        return None, error
+    if session["role"] != role:
+        return None, json_response(
+            {"error": "Forbidden", "message": "Insufficient permission"},
+            status=403,
+        )
+    return session, None
+
+
+def session_cookie(session_id):
+    return (
+        "{}={}; Path=/; Max-Age={}; HttpOnly; SameSite=Lax".format(
+            SESSION_COOKIE,
+            session_id,
+            SESSION_TTL_SECONDS,
+        )
+    )
+
+
+def expired_session_cookie():
+    return (
+        "{}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax".format(
+            SESSION_COOKIE
+        )
+    )
+
+
+@app.route("/login", methods=["POST", "PUT"])
+def login(headers, body, request):
+    data = parse_body(body, headers)
+    username = data.get("username", "")
+    password = data.get("password", "")
+    user = USERS.get(username)
+
+    if not user or user["password"] != password:
+        return json_response(
+            {"error": "Unauthorized", "message": "Invalid credentials"},
+            status=401,
+        )
+
+    session_id = create_session(username)
+    return json_response(
+        {
+            "message": "Login successful",
+            "username": username,
+            "role": user["role"],
+        },
+        headers={"Set-Cookie": session_cookie(session_id)},
+    )
+
+
+@app.route("/logout", methods=["POST", "PUT"])
+def logout(headers, body, request):
+    session_id = request.cookies.get(SESSION_COOKIE)
+    if session_id:
+        SESSIONS.pop(session_id, None)
+
+    return json_response(
+        {"message": "Logout successful"},
+        headers={"Set-Cookie": expired_session_cookie()},
+    )
+
+
+@app.route("/private", methods=["GET"])
+def private(headers, body, request):
+    session, error = require_user(request)
+    if error:
+        return error
+    return json_response(
+        {
+            "message": "Private route access granted",
+            "username": session["username"],
+            "role": session["role"],
+        }
+    )
+
+
+@app.route("/admin", methods=["GET"])
+def admin(headers, body, request):
+    session, error = require_role(request, "admin")
+    if error:
+        return error
+    return json_response(
+        {
+            "message": "Admin route access granted",
+            "username": session["username"],
+        }
+    )
+
 
 @app.route("/echo", methods=["POST"])
 def echo(headers="guest", body="anonymous"):
-    print("[SampleApp] received body {}".format(body))
-
     try:
         message = json.loads(body)
-        data = {"received": message }
-        # Convert to JSON string
-        json_str = json.dumps(data)
-        return (json_str.encode("utf-8"))
+        return json_response({"received": message})
     except json.JSONDecodeError:
-        data = {"error": "Invalid JSON"}
-        # Convert to JSON string
-        json_str = json.dumps(data)
-        return (json_str.encode("utf-8"))
+        return json_response({"error": "Invalid JSON"}, status=400)
 
 
-@app.route('/hello', methods=['POST'])
+@app.route("/hello", methods=["POST"])
 def hello(headers, body):
-    """
-    Handle greeting via POST request.
-
-    This route prints a greeting message to the console using the provided headers
-    and body.
-
-    :param headers (str): The request headers or user identifier.
-    :param body (str): The request body or message payload.
-    """
-    print("[SampleApp] ['POST'] Hello in {} to {}".format(headers, body))
     data = {"id": 1, "name": "Alice", "email": "alice@example.com"}
+    return json_response(data)
 
-    # Convert to JSON string
-    json_str = json.dumps(data)
-    return (json_str.encode("utf-8"))
 
 def create_sampleapp(ip, port):
-    # Prepare and launch the RESTful application
     app.prepare_address(ip, port)
     app.run()

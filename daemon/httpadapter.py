@@ -98,8 +98,24 @@ class HttpAdapter:
             )
 
         LOGGER.info("Dispatching route method=%s path=%s", req.method, req.path)
-        result = req.hook(req.headers, req.body)
+        result = self._call_route(req)
         return resp.build_response(req, envelop_content=result)
+
+    def _call_route(self, req):
+        """Call route handlers while preserving the Phase 1 two-arg API."""
+        signature = inspect.signature(req.hook)
+        positional = [
+            parameter
+            for parameter in signature.parameters.values()
+            if parameter.kind
+            in (
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            )
+        ]
+        if len(positional) >= 3:
+            return req.hook(req.headers, req.body, req)
+        return req.hook(req.headers, req.body)
 
     def handle_client(self, conn, addr, routes):
         """Read, route and respond to one synchronous HTTP client."""

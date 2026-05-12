@@ -37,6 +37,7 @@ class Response:
         201: "Created",
         204: "No Content",
         400: "Bad Request",
+        401: "Unauthorized",
         403: "Forbidden",
         404: "Not Found",
         405: "Method Not Allowed",
@@ -114,17 +115,19 @@ class Response:
         )
         return self._header + self._content
 
-    def build_json_response(self, data, status_code=200):
+    def build_json_response(self, data, status_code=200, headers=None):
         if isinstance(data, bytes):
             content = data
         elif isinstance(data, str):
             content = data.encode("utf-8")
         else:
             content = json.dumps(data).encode("utf-8")
+        response_headers = {"Content-Type": "application/json; charset=utf-8"}
+        response_headers.update(headers or {})
         return self._format(
             status_code,
             content,
-            {"Content-Type": "application/json; charset=utf-8"},
+            response_headers,
         )
 
     def build_text_response(self, text, status_code=200):
@@ -145,6 +148,29 @@ class Response:
 
     def build_notfound(self):
         return self.build_error(404, "404 Not Found")
+
+    def build_route_response(self, result):
+        """Build a response from a route handler result."""
+        if not isinstance(result, dict) or not any(
+            key in result for key in ("status", "body", "headers", "content_type")
+        ):
+            return self.build_json_response(result)
+
+        status_code = result.get("status", 200)
+        body = result.get("body", {})
+        headers = result.get("headers", {})
+        content_type = result.get("content_type", "application/json; charset=utf-8")
+
+        if isinstance(body, bytes):
+            content = body
+        elif content_type.startswith("application/json"):
+            content = json.dumps(body).encode("utf-8")
+        else:
+            content = str(body).encode("utf-8")
+
+        response_headers = {"Content-Type": content_type}
+        response_headers.update(headers)
+        return self._format(status_code, content, response_headers)
 
     def build_content(self, path, base_dir=None):
         if os.path.isabs(path):
@@ -171,7 +197,9 @@ class Response:
 
     def build_response(self, request, envelop_content=None, status_code=200):
         if envelop_content is not None:
-            return self.build_json_response(envelop_content, status_code)
+            if status_code != 200 and isinstance(envelop_content, dict):
+                envelop_content.setdefault("status", status_code)
+            return self.build_route_response(envelop_content)
 
         try:
             filepath = self._normalise_static_path(request.path)
