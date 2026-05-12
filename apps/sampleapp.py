@@ -24,14 +24,14 @@ import os
 import importlib.util
 import json
 
-from   daemon import AsynapRous
+from daemon import AsynapRous
 
 app = AsynapRous()
 
-@app.route('/login', methods=['POST'])
+@app.route('/login', methods=['PUT'])
 def login(headers="guest", body="anonymous"):
     """
-    Handle user login via POST request.
+    Handle user login via PUT request.
 
     This route simulates a login process and prints the provided headers and body
     to the console.
@@ -63,10 +63,10 @@ def echo(headers="guest", body="anonymous"):
         return (json_str.encode("utf-8"))
 
 
-@app.route('/hello', methods=['PUT'])
-async def hello(headers, body):
+@app.route('/hello', methods=['POST'])
+def hello(headers, body):
     """
-    Handle greeting via PUT request.
+    Handle greeting via POST request.
 
     This route prints a greeting message to the console using the provided headers
     and body.
@@ -74,8 +74,8 @@ async def hello(headers, body):
     :param headers (str): The request headers or user identifier.
     :param body (str): The request body or message payload.
     """
-    print("[SampleApp] ['PUT'] **ASYNC** Hello in {} to {}".format(headers, body))
-    data =  {"id": 1, "name": "Alice", "email": "alice@example.com"}
+    print("[SampleApp] ['POST'] Hello in {} to {}".format(headers, body))
+    data = {"id": 1, "name": "Alice", "email": "alice@example.com"}
 
     # Convert to JSON string
     json_str = json.dumps(data)
@@ -85,4 +85,3 @@ def create_sampleapp(ip, port):
     # Prepare and launch the RESTful application
     app.prepare_address(ip, port)
     app.run()
-

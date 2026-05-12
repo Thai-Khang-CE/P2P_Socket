@@ -14,302 +14,181 @@
 daemon.response
 ~~~~~~~~~~~~~~~~~
 
-This module provides a :class: `Response <Response>` object to manage and persist 
-response settings (cookies, auth, proxies), and to construct HTTP responses
-based on incoming requests. 
-
-The current version supports MIME type detection, content loading and header formatting
+Build HTTP/1.1 responses for static files and route handler payloads.
 """
+
 import datetime
-import os
+import json
+import logging
 import mimetypes
+import os
+
 from .dictionary import CaseInsensitiveDict
 
-BASE_DIR = ""
+LOGGER = logging.getLogger(__name__)
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 
-class Response():   
-    """The :class:`Response <Response>` object, which contains a
-    server's response to an HTTP request.
 
-    Instances are generated from a :class:`Request <Request>` object, and
-    should not be instantiated manually; doing so may produce undesirable
-    effects.
+class Response:
+    """HTTP response builder used by the backend adapter."""
 
-    :class:`Response <Response>` object encapsulates headers, content, 
-    status code, cookies, and metadata related to the request-response cycle.
-    It is used to construct and serve HTTP responses in a custom web server.
+    STATUS_REASONS = {
+        200: "OK",
+        201: "Created",
+        204: "No Content",
+        400: "Bad Request",
+        403: "Forbidden",
+        404: "Not Found",
+        405: "Method Not Allowed",
+        500: "Internal Server Error",
+    }
 
-    :attrs status_code (int): HTTP status code (e.g., 200, 404).
-    :attrs headers (dict): dictionary of response headers.
-    :attrs url (str): url of the response.
-    :attrsencoding (str): encoding used for decoding response content.
-    :attrs history (list): list of previous Response objects (for redirects).
-    :attrs reason (str): textual reason for the status code (e.g., "OK", "Not Found").
-    :attrs cookies (CaseInsensitiveDict): response cookies.
-    :attrs elapsed (datetime.timedelta): time taken to complete the request.
-    :attrs request (PreparedRequest): the original request object.
-
-    Usage::
-
-      >>> import Response
-      >>> resp = Response()
-      >>> resp.build_response(req)
-      >>> resp
-      <Response>
-    """
-
-    __attrs__ = [
-        "_content",
-        "_header",
-        "status_code",
-        "method",
-        "headers",
-        "url",
-        "history",
-        "encoding",
-        "reason",
-        "cookies",
-        "elapsed",
-        "request",
-        "body",
-        "reason",
-    ]
-
+    STATIC_ROOTS = {
+        "html": "www",
+        "static": "static",
+    }
 
     def __init__(self, request=None):
-        """
-        Initializes a new :class:`Response <Response>` object.
-
-        : params request : The originating request object.
-        """
-
-        self._content = False
-        self._content_consumed = False
-        self._next = None
-
-        #: Integer Code of responded HTTP Status, e.g. 404 or 200.
-        self.status_code = None
-
-        #: Case-insensitive Dictionary of Response Headers.
-        #: For example, ``headers['content-type']`` will return the
-        #: value of a ``'Content-Type'`` response header.
+        self._content = b""
+        self._header = b""
+        self.status_code = 200
         self.headers = {}
-
-        #: URL location of Response.
         self.url = None
-
-        #: Encoding to decode with when accessing response text.
-        self.encoding = None
-
-        #: A list of :class:`Response <Response>` objects from
-        #: the history of the Request.
+        self.encoding = "utf-8"
         self.history = []
-
-        #: Textual reason of responded HTTP Status, e.g. "Not Found" or "OK".
-        self.reason = None
-
-        #: A of Cookies the response headers.
+        self.reason = self.STATUS_REASONS[200]
         self.cookies = CaseInsensitiveDict()
-
-        #: The amount of time elapsed between sending the request
         self.elapsed = datetime.timedelta(0)
-
-        #: The :class:`PreparedRequest <PreparedRequest>` object to which this
-        #: is a response.
-        self.request = None
-
+        self.request = request
 
     def get_mime_type(self, path):
-        """
-        Determines the MIME type of a file based on its path.
+        mime_type, _ = mimetypes.guess_type(path)
+        return mime_type or "application/octet-stream"
 
-        "params path (str): Path to the file.
+    def _http_date(self):
+        return datetime.datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT")
 
-        :rtype str: MIME type string (e.g., 'text/html', 'image/png').
-        """
-
-        try:
-            mime_type, _ = mimetypes.guess_type(path)
-        except Exception:
-            return 'application/octet-stream'
-        return mime_type or 'application/octet-stream'
-
-
-    def prepare_content_type(self, mime_type='text/html'):
-        """
-        Prepares the Content-Type header and determines the base directory
-        for serving the file based on its MIME type.
-
-        :params mime_type (str): MIME type of the requested resource.
-
-        :rtype str: Base directory path for locating the resource.
-
-        :raises ValueError: If the MIME type is unsupported.
-        """
-        
-        base_dir = ""
-
-        # Validate header attr existence
-        if not hasattr(self, "headers") or self.headers is None:
-            self.headers = {}
-
-        # Processing mime_type based on main_type and sub_type
-        main_type, sub_type = mime_type.split('/', 1)
-        print("[Response] Processing main_type={} sub_type={}".format(main_type,sub_type))
-        if main_type == 'text':
-            self.headers['Content-Type']='text/{}'.format(sub_type)
-            if sub_type == 'plain' or sub_type == 'css':
-                base_dir = BASE_DIR+"static/"
-            elif sub_type == 'html':
-                base_dir = BASE_DIR+"www/"
-            else:
-                handle_text_other(sub_type)
-        elif main_type == 'image':
-            base_dir = BASE_DIR+"static/"
-            self.headers['Content-Type']='image/{}'.format(sub_type)
-        elif main_type == 'application':
-            base_dir = BASE_DIR+"apps/"
-            self.headers['Content-Type']='application/{}'.format(sub_type)
-        #
-        #  TODO: process other mime_type
-        #        application/xml       
-        #        application/zip
-        #        ...
-        #        text/csv
-        #        text/xml
-        #        ...
-        #        video/mp4 
-        #        video/mpeg
-        #        ...
-        #
+    def _normalise_static_path(self, request_path):
+        path = "/index.html" if request_path == "/" else request_path
+        path = path.split("?", 1)[0]
+        if path.startswith("/css/") or path.startswith("/images/"):
+            root = self.STATIC_ROOTS["static"]
+        elif path == "/favicon.ico":
+            root = os.path.join(self.STATIC_ROOTS["static"], "images")
         else:
-            raise ValueError("Invalid MEME type: main_type={} sub_type={}".format(main_type,sub_type))
+            root = self.STATIC_ROOTS["html"]
 
-        return base_dir
+        root_dir = os.path.abspath(os.path.join(BASE_DIR, root))
+        file_path = os.path.abspath(
+            os.path.normpath(os.path.join(root_dir, path.lstrip("/")))
+        )
+        if not file_path.startswith(root_dir):
+            raise ValueError("path traversal blocked")
+        return file_path
 
+    def _format(self, status_code, content, headers=None):
+        reason = self.STATUS_REASONS.get(status_code, "Unknown")
+        content = content or b""
+        if isinstance(content, str):
+            content = content.encode("utf-8")
 
-    def build_content(self, path, base_dir):
-        """
-        Loads the objects file from storage space.
+        response_headers = {
+            "Date": self._http_date(),
+            "Server": "AsynapRous/1.0",
+            "Content-Length": str(len(content)),
+            "Connection": "close",
+        }
+        response_headers.update(headers or {})
 
-        :params path (str): relative path to the file.
-        :params base_dir (str): base directory where the file is located.
+        status_line = "HTTP/1.1 {} {}\r\n".format(status_code, reason)
+        header_lines = [
+            "{}: {}\r\n".format(key, value)
+            for key, value in response_headers.items()
+        ]
+        self.status_code = status_code
+        self.reason = reason
+        self.headers = response_headers
+        self._content = content
+        self._header = (status_line + "".join(header_lines) + "\r\n").encode(
+            "iso-8859-1"
+        )
+        return self._header + self._content
 
-        :rtype tuple: (int, bytes) representing content length and content data.
-        """
+    def build_json_response(self, data, status_code=200):
+        if isinstance(data, bytes):
+            content = data
+        elif isinstance(data, str):
+            content = data.encode("utf-8")
+        else:
+            content = json.dumps(data).encode("utf-8")
+        return self._format(
+            status_code,
+            content,
+            {"Content-Type": "application/json; charset=utf-8"},
+        )
 
-        filepath = os.path.join(base_dir, path.lstrip('/'))
+    def build_text_response(self, text, status_code=200):
+        return self._format(
+            status_code,
+            text,
+            {"Content-Type": "text/plain; charset=utf-8"},
+        )
 
-        print("[Response] Serving the object at location {}".format(filepath))
-            #
-            #  TODO: implement the step of fetch the object file
-            #        store in the return value of content
-            #
+    def build_error(self, status_code, message=None):
+        reason = self.STATUS_REASONS.get(status_code, "Error")
+        body = message or reason
+        return self._format(
+            status_code,
+            body,
+            {"Content-Type": "text/plain; charset=utf-8"},
+        )
+
+    def build_notfound(self):
+        return self.build_error(404, "404 Not Found")
+
+    def build_content(self, path, base_dir=None):
+        if os.path.isabs(path):
+            filepath = path
+        elif base_dir:
+            filepath = os.path.abspath(os.path.join(base_dir, path.lstrip("/")))
+        else:
+            filepath = self._normalise_static_path(path)
+
+        LOGGER.info("Serving static file %s", filepath)
         try:
-            with open(filepath, "rb") as f:
-               content = f.read()
-        except Exception as e:
-            print("[Response] build_content exception: {}".format(e))
+            with open(filepath, "rb") as file_obj:
+                content = file_obj.read()
+        except FileNotFoundError:
+            LOGGER.warning("Static file not found: %s", filepath)
+            return -1, b""
+        except OSError as exc:
+            LOGGER.error("Could not read static file %s: %s", filepath, exc)
             return -1, b""
         return len(content), content
 
-
     def build_response_header(self, request):
-        """
-        Constructs the HTTP response headers based on the class:`Request <Request>
-        and internal attributes.
+        return self._header
 
-        :params request (class:`Request <Request>`): incoming request object.
+    def build_response(self, request, envelop_content=None, status_code=200):
+        if envelop_content is not None:
+            return self.build_json_response(envelop_content, status_code)
 
-        :rtypes bytes: encoded HTTP response header.
-        """
-        reqhdr = request.headers
-        rsphdr = self.headers
+        try:
+            filepath = self._normalise_static_path(request.path)
+        except ValueError:
+            return self.build_error(403, "403 Forbidden")
 
-        #Build dynamic headers
-        headers = {
-                "Accept": "{}".format(reqhdr.get("Accept", "application/json")),
-                "Accept-Language": "{}".format(reqhdr.get("Accept-Language", "en-US,en;q=0.9")),
-                "Authorization": "{}".format(reqhdr.get("Authorization", "Basic <credentials>")),
-                "Cache-Control": "no-cache",
-                "Content-Type": "{}".format(self.headers['Content-Type']),
-                "Content-Length": "{}".format(len(self._content)),
-        #       "Cookie": "{}".format(reqhdr.get("Cookie", "sessionid=xyz789")), #dummy cooki
-        #
-        # TODO prepare the request authentication
-        #
-        #       self.auth = ...
-                "Date": "{}".format(datetime.datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT")),
-                "Max-Forward": "10",
-                "Pragma": "no-cache",
-                "Proxy-Authorization": "Basic dXNlcjpwYXNz",  # example base64
-                "Warning": "199 Miscellaneous warning",
-                "User-Agent": "{}".format(reqhdr.get("User-Agent", "Chrome/123.0.0.0")),
-            }
-
-        # Header text alignment
-            #
-            #  TODO: implement the header building to create formated
-            #        header from the provied headers
-            #
-            #
-            # TODO prepare the request authentication
-            #
-            # self.auth = ...
-
-
-        return str(fmt_header).encode('utf-8')
-
-
-    def build_notfound(self):
-        """
-        Constructs a standard 404 Not Found HTTP response.
-
-        :rtype bytes: Encoded 404 response.
-        """
-
-        return (
-                "HTTP/1.1 404 Not Found\r\n"
-                "Accept-Ranges: bytes\r\n"
-                "Content-Type: text/html\r\n"
-                "Content-Length: 13\r\n"
-                "Cache-Control: max-age=86000\r\n"
-                "Connection: close\r\n"
-                "\r\n"
-                "404 Not Found"
-            ).encode('utf-8')
-
-
-    def build_response(self, request, envelop_content=None):
-        """
-        Builds a full HTTP response including headers and content based on the request.
-
-        :params request (class:`Request <Request>`): incoming request object.
-
-        :rtype bytes: complete HTTP response using prepared headers and content.
-        """
-        print("[Response] Start build response with req {}".format(request))
-
-        path = request.path
-
-        mime_type = self.get_mime_type(path)
-        print("[Response] {} path {} mime_type {}".format(request.method, request.path, mime_type))
-
-        base_dir = ""
-
-        #If HTML, parse and serve embedded objects
-        if path.endswith('.html') or mime_type == 'text/html':
-            base_dir = self.prepare_content_type(mime_type = 'text/html')
-        elif mime_type == 'text/css':
-            base_dir = self.prepare_content_type(mime_type = 'text/css')
-        elif mime_type == 'application/json' or mime_type == 'application/octet-stream':
-            base_dir = self.prepare_content_type(mime_type = 'application/json')
-            envelop_content = ""
-
-        #
-        # TODO: add support objects
-        #
-        else:
+        length, content = self.build_content(filepath, base_dir="")
+        if length < 0:
             return self.build_notfound()
 
-        return self._header + self._content
+        mime_type = self.get_mime_type(filepath)
+        if mime_type.startswith("text/"):
+            mime_type = "{}; charset=utf-8".format(mime_type)
+
+        LOGGER.info(
+            "Built static response status=200 path=%s bytes=%s",
+            request.path,
+            length,
+        )
+        return self._format(200, content, {"Content-Type": mime_type})
