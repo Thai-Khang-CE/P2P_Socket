@@ -48,6 +48,9 @@ SESSIONS = {}
 PEER_TTL_SECONDS = 300
 ACTIVE_PEER_STATUSES = {"online", "away", "busy"}
 PEERS = {}
+CHAT_CHANNELS = {}
+CHAT_NEXT_MESSAGE_ID = 1
+DEFAULT_CHANNELS = ("general", "python", "random")
 
 
 class PeerNode:
@@ -278,6 +281,75 @@ class PeerNode:
 
 
 P2P_NODE = PeerNode()
+
+
+def ensure_channel(name):
+    name = (name or "general").strip().lower()
+    if not name:
+        name = "general"
+    if name not in CHAT_CHANNELS:
+        CHAT_CHANNELS[name] = {
+            "name": name,
+            "members": set(),
+            "messages": [],
+        }
+    return CHAT_CHANNELS[name]
+
+
+def ensure_default_channels():
+    for channel in DEFAULT_CHANNELS:
+        ensure_channel(channel)
+
+
+def channel_summary():
+    ensure_default_channels()
+    return [
+        {
+            "name": channel["name"],
+            "members": sorted(channel["members"]),
+            "member_count": len(channel["members"]),
+            "message_count": len(channel["messages"]),
+        }
+        for channel in sorted(
+            CHAT_CHANNELS.values(),
+            key=lambda item: item["name"],
+        )
+    ]
+
+
+def add_chat_message(channel_name, username, text, system=False):
+    global CHAT_NEXT_MESSAGE_ID
+
+    channel = ensure_channel(channel_name)
+    message = {
+        "id": CHAT_NEXT_MESSAGE_ID,
+        "channel": channel["name"],
+        "username": username or "guest",
+        "text": text,
+        "system": system,
+        "timestamp": int(time.time()),
+    }
+    CHAT_NEXT_MESSAGE_ID += 1
+    channel["messages"].append(message)
+    channel["messages"] = channel["messages"][-200:]
+    return message
+
+
+def chat_messages(channel_name, since_id=0):
+    channel = ensure_channel(channel_name)
+    return [
+        message
+        for message in channel["messages"]
+        if int(message["id"]) > int(since_id or 0)
+    ]
+
+
+def chat_peers():
+    ensure_default_channels()
+    names = set()
+    for channel in CHAT_CHANNELS.values():
+        names.update(channel["members"])
+    return sorted(names)
 
 
 def json_response(body, status=200, headers=None):
@@ -756,6 +828,145 @@ def peer_inbox(headers, body, request):
             "port": P2P_NODE.port,
             "connections": P2P_NODE.connection_summary(),
             "messages": P2P_NODE.inbox(),
+        }
+    )
+
+
+@app.route("/chat-state", methods=["GET"])
+def chat_state(headers, body, request):
+    username = request.query_params.get("username", ["guest"])[0] or "guest"
+    channel_name = request.query_params.get("channel", ["general"])[0]
+    since_id = request.query_params.get("since", ["0"])[0]
+    ensure_default_channels()
+    ensure_channel(channel_name)["members"].add(username)
+    messages = chat_messages(channel_name, since_id=since_id)
+    latest_by_channel = []
+    for channel in CHAT_CHANNELS.values():
+        if channel["name"] == channel_name or not channel["messages"]:
+            continue
+        latest = channel["messages"][-1]
+        latest_by_channel.append({
+            "channel": channel["name"],
+            "text": latest["text"],
+            "username": latest["username"],
+            "id": latest["id"],
+        })
+    return json_response(
+        {
+            "username": username,
+            "active_channel": channel_name,
+            "channels": channel_summary(),
+            "peers": chat_peers(),
+            "messages": messages,
+            "notifications": latest_by_channel[-5:],
+        }
+    )
+
+
+@app.route("/chat-history", methods=["GET"])
+def chat_history(headers, body, request):
+    channel_name = request.query_params.get("channel", ["general"])[0]
+    limit = request.query_params.get("limit", ["50"])[0]
+    try:
+        limit = int(limit)
+    except ValueError:
+        limit = 50
+    channel = ensure_channel(channel_name)
+    return json_response(
+        {
+            "channel": channel["name"],
+            "messages": channel["messages"][-limit:],
+        }
+    )
+
+
+@app.route("/channel-join", methods=["POST", "PUT"])
+def channel_join(headers, body, request):
+    data = parse_body(body, headers)
+    username = data.get("username", "guest") or "guest"
+    channel_name = data.get("channel", "general") or "general"
+    channel = ensure_channel(channel_name)
+    was_member = username in channel["members"]
+    channel["members"].add(username)
+    if not was_member:
+        add_chat_message(channel["name"], "system", "{} joined".format(username), True)
+    return json_response(
+        {
+            "joined": True,
+            "channel": channel["name"],
+            "channels": channel_summary(),
+        }
+    )
+
+
+@app.route("/channel-create", methods=["POST", "PUT"])
+def channel_create(headers, body, request):
+    data = parse_body(body, headers)
+    username = data.get("username", "guest") or "guest"
+    channel_name = data.get("channel", "").strip().lower()
+    if not channel_name:
+        return json_response(
+            {"error": "Bad Request", "message": "channel is required"},
+            status=400,
+        )
+
+    existed = channel_name in CHAT_CHANNELS
+    channel = ensure_channel(channel_name)
+    channel["members"].add(username)
+    if not existed:
+        add_chat_message(
+            channel["name"],
+            "system",
+            "{} created #{}".format(username, channel["name"]),
+            True,
+        )
+    return json_response(
+        {
+            "created": not existed,
+            "joined": True,
+            "channel": channel["name"],
+            "channels": channel_summary(),
+        }
+    )
+
+
+@app.route("/channel-leave", methods=["POST", "PUT"])
+def channel_leave(headers, body, request):
+    data = parse_body(body, headers)
+    username = data.get("username", "guest") or "guest"
+    channel_name = data.get("channel", "general") or "general"
+    channel = ensure_channel(channel_name)
+    was_member = username in channel["members"]
+    channel["members"].discard(username)
+    if was_member:
+        add_chat_message(channel["name"], "system", "{} left".format(username), True)
+    return json_response(
+        {
+            "left": was_member,
+            "channel": channel["name"],
+            "channels": channel_summary(),
+        }
+    )
+
+
+@app.route("/chat-message", methods=["POST"])
+def chat_message(headers, body, request):
+    data = parse_body(body, headers)
+    username = data.get("username", "guest") or "guest"
+    channel_name = data.get("channel", "general") or "general"
+    text = data.get("message", "").strip()
+    if not text:
+        return json_response(
+            {"error": "Bad Request", "message": "message is required"},
+            status=400,
+        )
+    ensure_channel(channel_name)["members"].add(username)
+    message = add_chat_message(channel_name, username, text)
+    return json_response(
+        {
+            "sent": True,
+            "message": message,
+            "channels": channel_summary(),
         }
     )
 
