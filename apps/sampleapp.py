@@ -209,6 +209,26 @@ def peer_list(channel=None, include_inactive=False):
     )
 
 
+def channel_list():
+    """Return known tracker channel names."""
+    return sorted(CHAT_CHANNELS)
+
+
+def tracker_state_payload(session):
+    """Return tracker-only dashboard state for the browser UI."""
+    return {
+        "user": {
+            "username": session["username"],
+            "role": session["role"],
+        },
+        "peers": peer_list(),
+        "channels": channel_list(),
+        "note": (
+            "Tracker only handles discovery. Direct chat runs in peer.py."
+        ),
+    }
+
+
 def register_peer(data, request, session):
     """Register or refresh the peer owned by the logged-in user."""
     peer_addr = getattr(request, "connaddr", ("", 0))
@@ -376,13 +396,19 @@ def heartbeat(headers, body, request):
     data = parse_body(body, headers)
     peer_ip = data.get("peer_ip") or data.get("ip")
     peer_port = data.get("peer_port") or data.get("port")
+    if peer_port:
+        try:
+            peer_port = int(peer_port)
+        except (TypeError, ValueError):
+            return error_response("peer_port must be integer")
+
     refreshed = 0
     for peer in PEERS.values():
         if peer["username"] != session["username"]:
             continue
         if peer_ip and peer["peer_ip"] != str(peer_ip):
             continue
-        if peer_port and peer["peer_port"] != int(peer_port):
+        if peer_port and peer["peer_port"] != peer_port:
             continue
         peer["last_seen"] = time.time()
         peer["status"] = data.get("status", peer["status"])
@@ -403,6 +429,12 @@ def leave(headers, body, request):
     data = parse_body(body, headers)
     peer_ip = data.get("peer_ip") or data.get("ip")
     peer_port = data.get("peer_port") or data.get("port")
+    if peer_port:
+        try:
+            peer_port = int(peer_port)
+        except (TypeError, ValueError):
+            return error_response("peer_port must be integer")
+
     changed = 0
 
     for peer in PEERS.values():
@@ -410,7 +442,7 @@ def leave(headers, body, request):
             continue
         if peer_ip and peer["peer_ip"] != str(peer_ip):
             continue
-        if peer_port and peer["peer_port"] != int(peer_port):
+        if peer_port and peer["peer_port"] != peer_port:
             continue
         peer["status"] = "offline"
         peer["last_seen"] = time.time()
@@ -466,16 +498,22 @@ def peer_inbox(headers, body, request):
     return legacy_peer_response()
 
 
+@app.route("/tracker-state", methods=["GET"])
+def tracker_state(headers, body, request):
+    """Return authenticated tracker state for the browser dashboard."""
+    session, error = require_user(request)
+    if error:
+        return error
+    return json_response(tracker_state_payload(session))
+
+
 @app.route("/chat-state", methods=["GET"])
 def chat_state(headers, body, request):
     """Return optional UI channel state without storing chat messages."""
-    return json_response(
-        {
-            "channels": sorted(CHAT_CHANNELS),
-            "peers": peer_list(),
-            "message": "Use peer.py for direct TCP chat messages.",
-        }
-    )
+    session, error = require_user(request)
+    if error:
+        return error
+    return json_response(tracker_state_payload(session))
 
 
 @app.route("/echo", methods=["POST"])

@@ -11,7 +11,6 @@ import argparse
 import asyncio
 import http.client
 import json
-import signal
 import time
 import uuid
 from dataclasses import dataclass
@@ -347,16 +346,14 @@ class PeerNode:
             for peer in await self.tracker.get_list()
             if peer.get("username") != self.username
         ]
+        payload = PeerMessage(
+            type="broadcast",
+            sender=self.username,
+            channel=self.channel,
+            message=message,
+        ).to_payload()
         payloads = [
-            self.send_payload(
-                peer,
-                PeerMessage(
-                    type="broadcast",
-                    sender=self.username,
-                    channel=self.channel,
-                    message=message,
-                ).to_payload(),
-            )
+            self.send_payload(peer, payload)
             for peer in peers
         ]
         if not payloads:
@@ -371,9 +368,17 @@ class PeerNode:
         raise TrackerError("peer '{}' is not registered".format(username))
 
     async def send_payload(self, peer, payload):
-        """Open a direct TCP socket and send one JSON-line payload."""
+        """Open a direct TCP socket and wait for a matching ACK."""
         host = peer["peer_ip"]
         port = int(peer["peer_port"])
+        peer_name = peer["username"]
+        message_id = payload.get("message_id")
+        result = {
+            "peer": peer_name,
+            "ack": False,
+            "message_id": message_id,
+            "error": None,
+        }
         reader, writer = await asyncio.open_connection(host, port)
         try:
             await self.write_json(
@@ -387,17 +392,41 @@ class PeerNode:
                 },
             )
             await self.write_json(writer, payload)
-            try:
-                line = await asyncio.wait_for(
-                    reader.readline(),
-                    timeout=READ_ACK_TIMEOUT,
-                )
-            except asyncio.TimeoutError:
-                return {"peer": peer["username"], "ack": False}
-            if not line:
-                return {"peer": peer["username"], "ack": False}
-            ack = json.loads(line.decode("utf-8"))
-            return {"peer": peer["username"], "ack": ack}
+            deadline = time.monotonic() + READ_ACK_TIMEOUT
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    result["error"] = "timeout waiting for ack"
+                    return result
+
+                try:
+                    line = await asyncio.wait_for(
+                        reader.readline(),
+                        timeout=remaining,
+                    )
+                except asyncio.TimeoutError:
+                    result["error"] = "timeout waiting for ack"
+                    return result
+
+                if not line:
+                    result["error"] = "connection closed before ack"
+                    return result
+
+                try:
+                    response = json.loads(line.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    result["error"] = "invalid response from peer"
+                    return result
+
+                response_type = response.get("type")
+                if response_type == "ack":
+                    if response.get("message_id") == message_id:
+                        result["ack"] = True
+                        return result
+                    continue
+                if response_type == "error":
+                    result["error"] = response.get("message", "peer error")
+                    return result
         finally:
             writer.close()
             try:
@@ -432,13 +461,16 @@ class PeerNode:
             print("inbox is empty")
             return
         for item in messages:
-            print(
-                "[{type}] {from}: {message}".format(
-                    type=item.get("type"),
-                    **{"from": item.get("from", "unknown")},
-                    message=item.get("message", ""),
-                )
-            )
+            message_type = item.get("type", "unknown")
+            sender = item.get("from", "unknown")
+            message = item.get("message", "")
+            message_id = item.get("message_id", "")
+            print("[{}] {}: {} ({})".format(
+                message_type,
+                sender,
+                message,
+                message_id,
+            ))
 
     async def print_connections(self):
         """Print currently open inbound peer connections."""
@@ -574,15 +606,6 @@ async def async_main(args):
         tracker=tracker,
         channel=args.channel,
     )
-    loop = asyncio.get_running_loop()
-    for sig_name in ("SIGINT", "SIGTERM"):
-        sig = getattr(signal, sig_name, None)
-        if sig is None:
-            continue
-        try:
-            loop.add_signal_handler(sig, setattr, node, "running", False)
-        except (NotImplementedError, RuntimeError):
-            pass
     await node.run()
 
 
