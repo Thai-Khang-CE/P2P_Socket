@@ -91,6 +91,7 @@
                     <span class="status-pill online">${status}</span>
                 </span>
                 <span><b>Channels:</b> ${escapeHtml(channels)}</span>
+                <span><b>Last seen:</b> ${formatTimestamp(peer.last_seen)}</span>
             `;
             els.peerList.appendChild(card);
         });
@@ -104,7 +105,7 @@
         }
     }
 
-    async function loadPeers() {
+    async function refreshPeers() {
         const data = await api("/get-list");
         if (data) {
             state.peers = data.peers || [];
@@ -133,7 +134,7 @@
         await loadTrackerState();
     }
 
-    async function heartbeat() {
+    async function sendHeartbeat() {
         const payload = peerPayload();
         if (!payload.peer_port) {
             setStatus("Enter a peer port before sending heartbeat.");
@@ -177,18 +178,25 @@
             .replace(/'/g, "&#039;");
     }
 
+    function formatTimestamp(value) {
+        if (!value) {
+            return "unknown";
+        }
+        return new Date(Number(value) * 1000).toLocaleTimeString();
+    }
+
     function bindEvents() {
         els.registerForm.addEventListener("submit", (event) => {
             registerPeer(event).catch((error) => setStatus(error.message));
         });
         els.heartbeat.addEventListener("click", () => {
-            heartbeat().catch((error) => setStatus(error.message));
+            sendHeartbeat().catch((error) => setStatus(error.message));
         });
         els.leave.addEventListener("click", () => {
             leavePeer().catch((error) => setStatus(error.message));
         });
         els.refreshPeers.addEventListener("click", () => {
-            loadPeers().catch((error) => setStatus(error.message));
+            refreshPeers().catch((error) => setStatus(error.message));
         });
         els.logout.addEventListener("click", () => {
             logout().catch((error) => setStatus(error.message));
@@ -198,7 +206,7 @@
     async function start() {
         bindEvents();
         await loadMe();
-        await loadPeers();
+        await refreshPeers();
         await loadTrackerState();
     }
 

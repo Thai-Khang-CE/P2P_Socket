@@ -50,11 +50,12 @@ http://127.0.0.1:2026/login.html
 
 Log in as `alice` with password `wonderland`.  The browser dashboard at
 `/chat.html` can show the authenticated user, active peers, tracker status,
-and peer registration controls.
+and peer registration controls.  To demo the dashboard registration form, use
+peer IP `127.0.0.1`, peer port `9001`, and channel `general`.
 
 Important: the browser UI is only a tracker dashboard and demo helper.  It does
-not send direct chat messages.  Direct P2P transport is still handled by
-`peer.py`.
+not send P2P messages.  Direct P2P transport is handled by `peer.py`, and the
+tracker does not forward chat messages.
 
 ## Start Three Peers
 

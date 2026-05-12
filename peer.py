@@ -396,7 +396,7 @@ class PeerNode:
             while True:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    result["error"] = "timeout waiting for ack"
+                    result["error"] = "ack timeout"
                     return result
 
                 try:
@@ -405,7 +405,7 @@ class PeerNode:
                         timeout=remaining,
                     )
                 except asyncio.TimeoutError:
-                    result["error"] = "timeout waiting for ack"
+                    result["error"] = "ack timeout"
                     return result
 
                 if not line:

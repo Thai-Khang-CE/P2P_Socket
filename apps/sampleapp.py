@@ -224,7 +224,8 @@ def tracker_state_payload(session):
         "peers": peer_list(),
         "channels": channel_list(),
         "note": (
-            "Tracker only handles discovery. Direct chat runs in peer.py."
+            "Tracker only handles authentication and peer discovery. "
+            "Direct chat runs in peer.py."
         ),
     }
 
