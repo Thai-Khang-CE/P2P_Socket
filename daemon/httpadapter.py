@@ -14,10 +14,12 @@
 daemon.httpadapter
 ~~~~~~~~~~~~~~~~~
 
-Synchronous HTTP adapter for parsing requests, dispatching routes and writing
-HTTP responses.
+HTTP adapter for parsing requests, dispatching routes and writing responses.
+Phase 4 adds asyncio StreamReader/StreamWriter support while keeping the
+synchronous handler available for compatibility.
 """
 
+import asyncio
 import inspect
 import logging
 
@@ -90,19 +92,47 @@ class HttpAdapter:
             LOGGER.info("No route for method=%s path=%s", req.method, req.path)
             return resp.build_notfound()
 
-        if inspect.iscoroutinefunction(req.hook):
-            LOGGER.warning("Async route registered in Phase 1: %s", req.path)
-            return resp.build_error(
-                500,
-                "Async route handlers are not enabled in Phase 1",
-            )
-
         LOGGER.info("Dispatching route method=%s path=%s", req.method, req.path)
         result = self._call_route(req)
+        if inspect.isawaitable(result):
+            raise RuntimeError("Async route requires async backend mode")
+        return resp.build_response(req, envelop_content=result)
+
+    async def _dispatch_route_async(self, req, resp):
+        if req.method not in self.SUPPORTED_METHODS:
+            LOGGER.warning("Unsupported method %s for %s", req.method, req.path)
+            return resp.build_error(405, "405 Method Not Allowed")
+
+        if not req.hook:
+            if req.method == "GET":
+                return await asyncio.to_thread(resp.build_response, req)
+            LOGGER.info("No route for method=%s path=%s", req.method, req.path)
+            return resp.build_notfound()
+
+        LOGGER.info(
+            "Async dispatch route method=%s path=%s",
+            req.method,
+            req.path,
+        )
+        result = await self._call_route_async(req)
         return resp.build_response(req, envelop_content=result)
 
     def _call_route(self, req):
         """Call route handlers while preserving the Phase 1 two-arg API."""
+        return req.hook(*self._route_arguments(req))
+
+    async def _call_route_async(self, req):
+        """Call sync or async route handlers from the asyncio backend."""
+        args = self._route_arguments(req)
+        if inspect.iscoroutinefunction(req.hook):
+            return await req.hook(*args)
+
+        result = await asyncio.to_thread(req.hook, *args)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
+    def _route_arguments(self, req):
         signature = inspect.signature(req.hook)
         positional = [
             parameter
@@ -114,8 +144,8 @@ class HttpAdapter:
             )
         ]
         if len(positional) >= 3:
-            return req.hook(req.headers, req.body, req)
-        return req.hook(req.headers, req.body)
+            return req.headers, req.body, req
+        return req.headers, req.body
 
     def handle_client(self, conn, addr, routes):
         """Read, route and respond to one synchronous HTTP client."""
@@ -142,8 +172,54 @@ class HttpAdapter:
         LOGGER.info("Closed connection from %s", addr)
 
     async def handle_client_coroutine(self, reader, writer):
-        """Async mode is reserved for later assignment phases."""
-        raise NotImplementedError("Async mode is not implemented in Phase 1")
+        """Read, route and respond to one asyncio client connection."""
+        addr = writer.get_extra_info("peername")
+        req = Request()
+        resp = Response()
+        LOGGER.info("Async accepted connection from %s", addr)
+
+        try:
+            msg = await self._read_http_message_async(reader)
+            req.prepare(msg, self.routes)
+            response = await self._dispatch_route_async(req, resp)
+        except ValueError as exc:
+            LOGGER.warning("Bad async request from %s: %s", addr, exc)
+            response = resp.build_error(400, "400 Bad Request")
+        except Exception:
+            LOGGER.exception("Unhandled async error while serving %s", addr)
+            response = resp.build_error(500, "500 Internal Server Error")
+
+        writer.write(response)
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+        LOGGER.info("Async closed connection from %s", addr)
+
+    async def _read_http_message_async(self, reader):
+        """Read a full HTTP message without blocking the event loop."""
+        try:
+            header_bytes = await reader.readuntil(b"\r\n\r\n")
+        except asyncio.IncompleteReadError as exc:
+            if exc.partial:
+                return exc.partial.decode("iso-8859-1", errors="replace")
+            raise ValueError("empty request")
+        except asyncio.LimitOverrunError as exc:
+            raise ValueError("headers too large") from exc
+
+        header_text = header_bytes.decode("iso-8859-1", errors="replace")
+        content_length = self._content_length_from_headers(header_text)
+        body = b""
+        if content_length:
+            try:
+                body = await reader.readexactly(content_length)
+            except asyncio.IncompleteReadError as exc:
+                raise ValueError("incomplete request body") from exc
+
+        return (
+            header_bytes.rstrip(b"\r\n")
+            + b"\r\n\r\n"
+            + body
+        ).decode("utf-8", errors="replace")
 
     @property
     def extract_cookies(self):

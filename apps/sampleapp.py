@@ -19,6 +19,7 @@ app.sampleapp
 Sample REST app with Phase 3 cookie-based session authentication.
 """
 
+import asyncio
 import json
 import secrets
 import time
@@ -209,6 +210,12 @@ def echo(headers="guest", body="anonymous"):
 def hello(headers, body):
     data = {"id": 1, "name": "Alice", "email": "alice@example.com"}
     return json_response(data)
+
+
+@app.route("/async-hello", methods=["GET"])
+async def async_hello(headers, body, request):
+    await asyncio.sleep(0.01)
+    return json_response({"message": "Hello from async route"})
 
 
 def create_sampleapp(ip, port):

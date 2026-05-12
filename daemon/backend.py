@@ -14,10 +14,9 @@
 daemon.backend
 ~~~~~~~~~~~~~~~~~
 
-This module provides a backend object to manage and persist backend daemon. 
-It implements a basic backend server using Python's socket and threading libraries.
-It supports handling multiple client connections concurrently and routing requests using a
-custom HTTP adapter.
+This module provides a backend object to manage and persist backend daemon.
+Phase 4 prioritizes the asyncio backend while keeping the older synchronous
+socket handlers available as compatibility fallbacks.
 
 Requirements:
 --------------
@@ -51,9 +50,7 @@ from .httpadapter import HttpAdapter
 
 LOGGER = logging.getLogger(__name__)
 
-mode_async = "callback"
-#mode_async = "coroutine"
-mode_async = "threading"
+mode_async = "coroutine"
 
 def handle_client(ip, port, conn, addr, routes):
     """
@@ -90,7 +87,7 @@ def handle_client_callback(server, ip, port, conn, addr, routes):
 
 
 # Coroutine async/await for handling new client
-async def handle_client_coroutine(reader, writer):
+async def handle_client_coroutine(reader, writer, routes=None):
     """
     Coroutine in async communication to initialize connection instance
     then delegates the client handling logic to it.
@@ -99,27 +96,42 @@ async def handle_client_coroutine(reader, writer):
     :param write (Stream write): Stream write wrapper.
     """
     addr = writer.get_extra_info("peername")
-    print("[Backend] Invoke handle_client_coroutine accepted connection from {}".format(addr))
-
-    # Handle client in asynchronous mode
-    while True:
-        daemon = HttpAdapter(None, None, None, None, None)
-        await daemon.handle_client_coroutine(reader, writer)
+    LOGGER.info("Async accepted connection from %s", addr)
+    daemon = HttpAdapter(None, None, None, addr, routes or {})
+    await daemon.handle_client_coroutine(reader, writer)
 
 async def async_server(ip="0.0.0.0", port=7000, routes=None):
     routes = routes or {}
-    print("[Backend] async_server **ASYNC** listening on port {}".format(port))
+    if not logging.getLogger().handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="[%(levelname)s] %(name)s: %(message)s",
+        )
+
+    LOGGER.info("asyncio backend listening on %s:%s", ip, port)
     if routes != {}:
-        print("[Backend] route settings")
+        LOGGER.info("Async route settings")
         for key, value in routes.items():
             isCoFunc = ""
             if inspect.iscoroutinefunction(value):
-               isCoFunc += "**ASYNC** "
-            print("   + ('{}', '{}'): {}{}".format(key[0], key[1], isCoFunc, str(value)))
+                isCoFunc += "**ASYNC** "
+            LOGGER.info(
+                "   + ('%s', '%s'): %s%s",
+                key[0],
+                key[1],
+                isCoFunc,
+                str(value),
+            )
 
-    async_server = await asyncio.start_server(handle_client_coroutine, ip, port)
-    async with async_server:
-        await async_server.serve_forever()
+    server = await asyncio.start_server(
+        lambda reader, writer: handle_client_coroutine(reader, writer, routes),
+        ip,
+        port,
+    )
+    sockets = ", ".join(str(sock.getsockname()) for sock in server.sockets or [])
+    LOGGER.info("asyncio.start_server active sockets: %s", sockets)
+    async with server:
+        await server.serve_forever()
     return
 
 
