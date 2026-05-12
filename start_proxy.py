@@ -35,70 +35,12 @@ Requirements:
 
 """
 
-import socket
-import threading
 import argparse
-import re
-from urllib.parse import urlparse
-from collections import defaultdict
 
 from daemon import create_proxy
+from daemon.proxy import parse_proxy_config
 
 PROXY_PORT = 8080
-
-
-def parse_virtual_hosts(config_file):
-    """
-    Parses virtual host blocks from a config file.
-
-    :config_file (str): Path to the NGINX config file.
-    :rtype list of dict: Each dict contains 'listen'and 'server_name'.
-    """
-
-    with open(config_file, 'r') as f:
-        config_text = f.read()
-
-    # Match each host block
-    host_blocks = re.findall(r'host\s+"([^"]+)"\s*\{(.*?)\}', config_text, re.DOTALL)
-
-    dist_policy_map = ""
-
-    routes = {}
-    for host, block in host_blocks:
-        proxy_map = {}
-
-        # Find all proxy_pass entries
-        proxy_passes = re.findall(r'proxy_pass\s+http://([^\s;]+);', block)
-        map = proxy_map.get(host,[])
-        map = map + proxy_passes
-        proxy_map[host] = map
-
-        # Find dist_policy if present
-        policy_match = re.search(r'dist_policy\s+(\w+)', block)
-        if policy_match:
-            dist_policy_map = policy_match.group(1)
-        else: #default policy is round_robin
-            dist_policy_map = 'round-robin'
-            
-        #
-        # @bksysnet: Build the mapping and policy
-        # TODO: this policy varies among scenarios 
-        #       the default policy is provided with one proxy_pass
-        #       In the multi alternatives of proxy_pass then
-        #       the policy is applied to identify the highes matching
-        #       proxy_pass
-        #
-        if len(proxy_map.get(host,[])) == 1:
-            routes[host] = (proxy_map.get(host,[])[0], dist_policy_map)
-        # esle if:
-        #         TODO:  apply further policy matching here
-        #
-        else:
-            routes[host] = (proxy_map.get(host,[]), dist_policy_map)
-
-    for key, value in routes.items():
-        print(key, value)
-    return routes
 
 
 if __name__ == "__main__":
@@ -121,6 +63,6 @@ if __name__ == "__main__":
     ip = args.server_ip
     port = args.server_port
 
-    routes = parse_virtual_hosts("config/proxy.conf")
+    routes = parse_proxy_config("config/proxy.conf")
 
     create_proxy(ip, port, routes)

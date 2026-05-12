@@ -1,0 +1,1463 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [5 0 R 7 0 R 9 0 R 11 0 R 13 0 R 15 0 R 17 0 R 19 0 R 21 0 R 23 0 R 25 0 R 27 0 R 29 0 R] /Count 13 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>
+endobj
+4 0 obj
+<< /Length 1981 >>
+stream
+BT
+/F1 10 Tf
+54 742 Td
+(CO3094 Phase 1 Backend Guide) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(This guide explains what the Phase 1 HTTP backend does, what you should learn) Tj
+0 -14 Td
+(before reading the code, and how the modified files work together.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(1. What This Project Is) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(This project is a small HTTP backend server written with only the Python) Tj
+0 -14 Td
+(standard library.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(It does not use Flask, FastAPI, Django, aiohttp, or any external framework.) Tj
+0 -14 Td
+(Instead, it builds the basic ideas of a web server manually:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(  - open a TCP socket) Tj
+0 -14 Td
+(  - accept a browser or curl connection) Tj
+0 -14 Td
+(  - read raw HTTP text) Tj
+0 -14 Td
+(  - parse the request) Tj
+0 -14 Td
+(  - dispatch it to either a static file or a route handler) Tj
+0 -14 Td
+(  - build a valid HTTP response) Tj
+0 -14 Td
+(  - send the response back through the socket) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Phase 1 is synchronous. That means the server handles requests with normal) Tj
+0 -14 Td
+(blocking socket code and threads. Asyncio is intentionally not implemented yet.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(2. Theory To Learn Before Reading The Code) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(2.1 TCP Sockets) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(HTTP runs on top of TCP.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(A TCP server normally does this:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(1. Create a socket.) Tj
+0 -14 Td
+(2. Bind it to an IP and port.) Tj
+0 -14 Td
+(3. Listen for clients.) Tj
+0 -14 Td
+(4. Accept a connection.) Tj
+0 -14 Td
+(5. Receive bytes.) Tj
+0 -14 Td
+(6. Send bytes back.) Tj
+0 -14 Td
+(7. Close the connection.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(In this project, that logic lives mainly in:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(  - daemon/backend.py) Tj
+0 -14 Td
+(  - daemon/httpadapter.py) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Important Python functions:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(  - socket.socket\(...\)) Tj
+0 -14 Td
+(  - bind\(...\)) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 4 0 R >>
+endobj
+6 0 obj
+<< /Length 1404 >>
+stream
+BT
+/F1 10 Tf
+54 742 Td
+(  - listen\(...\)) Tj
+0 -14 Td
+(  - accept\(...\)) Tj
+0 -14 Td
+(  - recv\(...\)) Tj
+0 -14 Td
+(  - sendall\(...\)) Tj
+0 -14 Td
+(  - close\(...\)) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(2.2 HTTP Request Format) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(When you run:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    curl.exe -i http://127.0.0.1:9000/) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(curl sends a raw HTTP request similar to:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    GET / HTTP/1.1) Tj
+0 -14 Td
+(    Host: 127.0.0.1:9000) Tj
+0 -14 Td
+(    User-Agent: curl/...) Tj
+0 -14 Td
+(    Accept: */*) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(An HTTP request has three main parts:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(1. Request line) Tj
+0 -14 Td
+(2. Headers) Tj
+0 -14 Td
+(3. Optional body) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Example with a body:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    POST /hello HTTP/1.1) Tj
+0 -14 Td
+(    Host: 127.0.0.1:2026) Tj
+0 -14 Td
+(    Content-Type: application/json) Tj
+0 -14 Td
+(    Content-Length: 16) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    {"message":"hi"}) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(The first line tells the server:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(  - method: POST) Tj
+0 -14 Td
+(  - path: /hello) Tj
+0 -14 Td
+(  - HTTP version: HTTP/1.1) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Headers give metadata. The body carries data for POST and PUT.) Tj
+0 -14 Td
+() Tj
+ET
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 6 0 R >>
+endobj
+8 0 obj
+<< /Length 1695 >>
+stream
+BT
+/F1 10 Tf
+54 742 Td
+(This project parses requests in:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(  - daemon/request.py) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(2.3 HTTP Response Format) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(The server must send back a valid HTTP response:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    HTTP/1.1 200 OK) Tj
+0 -14 Td
+(    Date: ...) Tj
+0 -14 Td
+(    Server: AsynapRous/1.0) Tj
+0 -14 Td
+(    Content-Length: 554) Tj
+0 -14 Td
+(    Connection: close) Tj
+0 -14 Td
+(    Content-Type: text/html; charset=utf-8) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    <html>...</html>) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(An HTTP response has:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(1. Status line) Tj
+0 -14 Td
+(2. Headers) Tj
+0 -14 Td
+(3. Blank line) Tj
+0 -14 Td
+(4. Optional body) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Common status codes:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(  - 200 OK: request succeeded) Tj
+0 -14 Td
+(  - 400 Bad Request: request was malformed) Tj
+0 -14 Td
+(  - 403 Forbidden: blocked path) Tj
+0 -14 Td
+(  - 404 Not Found: file or route not found) Tj
+0 -14 Td
+(  - 405 Method Not Allowed: HTTP method unsupported) Tj
+0 -14 Td
+(  - 500 Internal Server Error: server code crashed) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(This project builds responses in:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(  - daemon/response.py) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(2.4 HTTP Methods) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(The Phase 1 dispatcher supports:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(  - GET: fetch a file or page) Tj
+0 -14 Td
+(  - POST: send data to a route) Tj
+0 -14 Td
+(  - PUT: update or submit data to a route) Tj
+0 -14 Td
+(  - DELETE: request deletion, currently dispatch-supported but no sample route) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(HEAD is not implemented in Phase 1.) Tj
+ET
+endstream
+endobj
+9 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 8 0 R >>
+endobj
+10 0 obj
+<< /Length 1483 >>
+stream
+BT
+/F1 10 Tf
+54 742 Td
+() Tj
+0 -14 Td
+(This logic is in:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(  - daemon/httpadapter.py) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(2.5 Static Files) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Static files are normal files returned by the server.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Examples:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(  - / maps to www/index.html) Tj
+0 -14 Td
+(  - /css/styles.css maps to static/css/styles.css) Tj
+0 -14 Td
+(  - /images/welcome.png maps to static/images/welcome.png) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(The server must detect the MIME type:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(  - .html -> text/html) Tj
+0 -14 Td
+(  - .css -> text/css) Tj
+0 -14 Td
+(  - .png -> image/png) Tj
+0 -14 Td
+(  - .jpg -> image/jpeg) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(This logic is in:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(  - daemon/response.py) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(2.6 Routing) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Routing means mapping a method and path to a Python function.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Example:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    @app.route\('/hello', methods=['POST']\)) Tj
+0 -14 Td
+(    def hello\(headers, body\):) Tj
+0 -14 Td
+(        ...) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(This creates a route like:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    \('POST', '/hello'\) -> hello) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(When a request arrives, the server checks:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    routes.get\(\(request.method, request.path\)\)) Tj
+0 -14 Td
+() Tj
+ET
+endstream
+endobj
+11 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 10 0 R >>
+endobj
+12 0 obj
+<< /Length 1397 >>
+stream
+BT
+/F1 10 Tf
+54 742 Td
+() Tj
+0 -14 Td
+(If a function exists, it calls the function.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(This project has route registration in:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(  - daemon/asynaprous.py) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(And route dispatch in:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(  - daemon/httpadapter.py) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(2.7 JSON) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(JSON is a common format for API responses.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Example:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    {"message": "Welcome to the RESTful TCP WebApp"}) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Python converts dictionaries to JSON with:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    json.dumps\(data\)) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Sample route handlers return JSON bytes.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(This project uses JSON in:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(  - apps/sampleapp.py) Tj
+0 -14 Td
+(  - daemon/response.py) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(2.8 Cookies And Query Parameters) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Query parameters are in the URL:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    /hello?name=alice&age=20) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Cookies are sent in headers:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    Cookie: sessionid=abc123; theme=dark) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Phase 1 parses both so later phases can use them.) Tj
+ET
+endstream
+endobj
+13 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 12 0 R >>
+endobj
+14 0 obj
+<< /Length 1484 >>
+stream
+BT
+/F1 10 Tf
+54 742 Td
+() Tj
+0 -14 Td
+(This logic is in:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(  - daemon/request.py) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(2.9 Logging) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Logging helps you see what the server is doing.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Example logs:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    [INFO] daemon.backend: Listening on 127.0.0.1:9000) Tj
+0 -14 Td
+(    [INFO] daemon.request: Parsed request method=GET path=/) Tj
+0 -14 Td
+(    [INFO] daemon.response: Built static response status=200) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(This is better than many random print\(...\) calls because logs can show module) Tj
+0 -14 Td
+(names and severity levels.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(3. What I Changed) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(3.1 daemon/request.py) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(I completed request parsing.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(It now parses:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(  - request line) Tj
+0 -14 Td
+(  - method) Tj
+0 -14 Td
+(  - path) Tj
+0 -14 Td
+(  - HTTP version) Tj
+0 -14 Td
+(  - headers) Tj
+0 -14 Td
+(  - body) Tj
+0 -14 Td
+(  - query parameters) Tj
+0 -14 Td
+(  - cookies) Tj
+0 -14 Td
+(  - route hook lookup) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Important flow:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    req.prepare\(raw_http_message, routes\)) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Inside prepare\(...\), the request object fills these fields:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    req.method) Tj
+0 -14 Td
+(    req.path) Tj
+ET
+endstream
+endobj
+15 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 14 0 R >>
+endobj
+16 0 obj
+<< /Length 1423 >>
+stream
+BT
+/F1 10 Tf
+54 742 Td
+(    req.version) Tj
+0 -14 Td
+(    req.headers) Tj
+0 -14 Td
+(    req.body) Tj
+0 -14 Td
+(    req.query_params) Tj
+0 -14 Td
+(    req.cookies) Tj
+0 -14 Td
+(    req.hook) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Example:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    POST /hello?name=alice HTTP/1.1) Tj
+0 -14 Td
+(    Cookie: theme=dark) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    {"message":"hi"}) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(becomes:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    method = "POST") Tj
+0 -14 Td
+(    path = "/hello") Tj
+0 -14 Td
+(    query_params = {"name": ["alice"]}) Tj
+0 -14 Td
+(    cookies = {"theme": "dark"}) Tj
+0 -14 Td
+(    body = '{"message":"hi"}') Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(3.2 daemon/response.py) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(I completed response building.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(It now supports:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(  - proper HTTP status line) Tj
+0 -14 Td
+(  - response headers) Tj
+0 -14 Td
+(  - Content-Length) Tj
+0 -14 Td
+(  - Content-Type) Tj
+0 -14 Td
+(  - static files) Tj
+0 -14 Td
+(  - JSON responses) Tj
+0 -14 Td
+(  - text error responses) Tj
+0 -14 Td
+(  - MIME type detection) Tj
+0 -14 Td
+(  - path traversal protection) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Important methods:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    build_response\(...\)) Tj
+0 -14 Td
+(    build_json_response\(...\)) Tj
+0 -14 Td
+(    build_error\(...\)) Tj
+ET
+endstream
+endobj
+17 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 16 0 R >>
+endobj
+18 0 obj
+<< /Length 1421 >>
+stream
+BT
+/F1 10 Tf
+54 742 Td
+(    build_notfound\(...\)) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(For static files:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    GET /) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(returns:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    www/index.html) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(For route output:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    POST /hello) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(returns JSON.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(3.3 daemon/httpadapter.py) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(I completed synchronous request handling and route dispatch.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(It now:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(1. Reads bytes from the socket.) Tj
+0 -14 Td
+(2. Reads the full body using Content-Length.) Tj
+0 -14 Td
+(3. Parses the request.) Tj
+0 -14 Td
+(4. Checks the HTTP method.) Tj
+0 -14 Td
+(5. Serves static files for GET.) Tj
+0 -14 Td
+(6. Calls route functions for POST, PUT, and DELETE.) Tj
+0 -14 Td
+(7. Sends the response with sendall\(...\).) Tj
+0 -14 Td
+(8. Closes the connection.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Supported methods:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    {"GET", "POST", "PUT", "DELETE"}) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Async route functions are not used in Phase 1.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(3.4 daemon/backend.py) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(I made the backend server launch correctly in synchronous mode.) Tj
+ET
+endstream
+endobj
+19 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 18 0 R >>
+endobj
+20 0 obj
+<< /Length 1416 >>
+stream
+BT
+/F1 10 Tf
+54 742 Td
+() Tj
+0 -14 Td
+(It now:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(  - binds to the requested IP and port) Tj
+0 -14 Td
+(  - listens for connections) Tj
+0 -14 Td
+(  - accepts clients) Tj
+0 -14 Td
+(  - handles clients in threads) Tj
+0 -14 Td
+(  - logs server activity) Tj
+0 -14 Td
+(  - enables SO_REUSEADDR) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(start_backend.py uses this path:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    start_backend.py -> daemon.create_backend -> daemon.backend.run_backend) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(3.5 apps/sampleapp.py) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(I aligned the sample routes with your Phase 1 objective:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    POST /hello) Tj
+0 -14 Td
+(    PUT /login) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Expected sample outputs:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(POST /hello:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    {"id": 1, "name": "Alice", "email": "alice@example.com"}) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(PUT /login:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    {"message": "Welcome to the RESTful TCP WebApp"}) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(3.6 daemon/dictionary.py) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(I fixed compatibility with newer Python versions.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Old code:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    from collections import MutableMapping) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+ET
+endstream
+endobj
+21 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 20 0 R >>
+endobj
+22 0 obj
+<< /Length 1600 >>
+stream
+BT
+/F1 10 Tf
+54 742 Td
+(Newer Python expects:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    from collections.abc import MutableMapping) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(The code now supports both old and new Python versions.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(4. How The Files Work Together) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(For GET /:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    curl -> socket -> backend.py -> httpadapter.py -> request.py) Tj
+0 -14 Td
+(         -> response.py -> www/index.html -> curl) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(For POST /hello:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    curl -> socket -> backend.py -> httpadapter.py -> request.py) Tj
+0 -14 Td
+(         -> sampleapp.hello\(...\) -> response.py -> curl) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(For PUT /login:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    curl -> socket -> backend.py -> httpadapter.py -> request.py) Tj
+0 -14 Td
+(         -> sampleapp.login\(...\) -> response.py -> curl) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(5. How To Test) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(5.1 Test Static Backend) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Terminal 1:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    cd D:\\CO3094-asynaprous) Tj
+0 -14 Td
+(    python start_backend.py --server-ip 127.0.0.1 --server-port 9000) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Terminal 2:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    curl.exe -i http://127.0.0.1:9000/) Tj
+0 -14 Td
+(    curl.exe -i http://127.0.0.1:9000/css/styles.css) Tj
+0 -14 Td
+(    curl.exe -i http://127.0.0.1:9000/images/welcome.png) Tj
+0 -14 Td
+() Tj
+ET
+endstream
+endobj
+23 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 22 0 R >>
+endobj
+24 0 obj
+<< /Length 1505 >>
+stream
+BT
+/F1 10 Tf
+54 742 Td
+() Tj
+0 -14 Td
+(5.2 Test Sample App Routes) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Terminal 1:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    cd D:\\CO3094-asynaprous) Tj
+0 -14 Td
+(    python start_sampleapp.py --server-ip 127.0.0.1 --server-port 2026) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Terminal 2:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    curl.exe -i http://127.0.0.1:2026/) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    curl.exe -i -X POST http://127.0.0.1:2026/hello -H "Content-Type: application/json" -d) Tj
+0 -14 Td
+(    '{\\"message\\":\\"hi\\"}') Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    curl.exe -i -X PUT http://127.0.0.1:2026/login -H "Content-Type: application/json" -d) Tj
+0 -14 Td
+(    '{\\"username\\":\\"alice\\"}') Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    curl.exe -i -X DELETE http://127.0.0.1:2026/login) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(The DELETE request should return 404 Not Found unless you add a) Tj
+0 -14 Td
+(DELETE /login route later. This still proves the dispatcher understands the) Tj
+0 -14 Td
+(method.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(6. Common Mistakes) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Mistake 1: Testing The Wrong Port) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(start_backend.py default port:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    9000) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(start_sampleapp.py default port:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    2026) Tj
+0 -14 Td
+() Tj
+ET
+endstream
+endobj
+25 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 24 0 R >>
+endobj
+26 0 obj
+<< /Length 1573 >>
+stream
+BT
+/F1 10 Tf
+54 742 Td
+() Tj
+0 -14 Td
+(If you start the backend on 9000 but curl 2026, it will fail.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Mistake 2: Closing The Server Terminal) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(The server terminal must stay running.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(If you see a new PowerShell prompt immediately after starting the server, the) Tj
+0 -14 Td
+(server exited or crashed.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Mistake 3: Broken PowerShell Quotes) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(If PowerShell shows:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    >>) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(your command has broken quotes. Press Ctrl+C and retype the curl command.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Mistake 4: Expecting POST On start_backend.py) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(start_backend.py serves static files only.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Use start_sampleapp.py for:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(  - POST /hello) Tj
+0 -14 Td
+(  - PUT /login) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(7. Reading Order For The Code) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Read files in this order:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(1. start_backend.py) Tj
+0 -14 Td
+(2. daemon/backend.py) Tj
+0 -14 Td
+(3. daemon/httpadapter.py) Tj
+0 -14 Td
+(4. daemon/request.py) Tj
+0 -14 Td
+(5. daemon/response.py) Tj
+0 -14 Td
+(6. daemon/asynaprous.py) Tj
+0 -14 Td
+(7. apps/sampleapp.py) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(This order follows the real execution path.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(8. Mental Model) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Think of the server as a pipeline:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(    Raw bytes) Tj
+ET
+endstream
+endobj
+27 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 26 0 R >>
+endobj
+28 0 obj
+<< /Length 1859 >>
+stream
+BT
+/F1 10 Tf
+54 742 Td
+(      -> Request parser) Tj
+0 -14 Td
+(      -> Router / static file lookup) Tj
+0 -14 Td
+(      -> Handler function or file reader) Tj
+0 -14 Td
+(      -> Response builder) Tj
+0 -14 Td
+(      -> Raw bytes back to client) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(That is the core idea of almost every web framework. Flask and FastAPI hide) Tj
+0 -14 Td
+(these steps from you. This assignment asks you to build the steps yourself.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(9. What Is Not Implemented Yet) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Phase 1 intentionally does not implement:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(  - authentication) Tj
+0 -14 Td
+(  - sessions) Tj
+0 -14 Td
+(  - advanced cookie handling) Tj
+0 -14 Td
+(  - asyncio server mode) Tj
+0 -14 Td
+(  - async route execution) Tj
+0 -14 Td
+(  - database access) Tj
+0 -14 Td
+(  - middleware) Tj
+0 -14 Td
+(  - full REST application design) Tj
+0 -14 Td
+(  - HEAD support) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Those can be later phases.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(10. Summary) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(The Phase 1 backend is now a working synchronous HTTP server.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(It can:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(  - accept TCP connections) Tj
+0 -14 Td
+(  - parse HTTP requests) Tj
+0 -14 Td
+(  - read headers and bodies) Tj
+0 -14 Td
+(  - parse query parameters and cookies) Tj
+0 -14 Td
+(  - serve static files) Tj
+0 -14 Td
+(  - return JSON) Tj
+0 -14 Td
+(  - dispatch GET, POST, PUT, and DELETE) Tj
+0 -14 Td
+(  - log server activity) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(The most important files are:) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(  - daemon/backend.py: server loop) Tj
+0 -14 Td
+(  - daemon/httpadapter.py: connection handling and dispatch) Tj
+0 -14 Td
+(  - daemon/request.py: request parsing) Tj
+0 -14 Td
+(  - daemon/response.py: response formatting) Tj
+0 -14 Td
+(  - apps/sampleapp.py: example routes) Tj
+ET
+endstream
+endobj
+29 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents 28 0 R >>
+endobj
+xref
+0 30
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000204 00000 n 
+0000000272 00000 n 
+0000002305 00000 n 
+0000002431 00000 n 
+0000003887 00000 n 
+0000004013 00000 n 
+0000005760 00000 n 
+0000005886 00000 n 
+0000007422 00000 n 
+0000007550 00000 n 
+0000009000 00000 n 
+0000009128 00000 n 
+0000010665 00000 n 
+0000010793 00000 n 
+0000012269 00000 n 
+0000012397 00000 n 
+0000013871 00000 n 
+0000013999 00000 n 
+0000015468 00000 n 
+0000015596 00000 n 
+0000017249 00000 n 
+0000017377 00000 n 
+0000018935 00000 n 
+0000019063 00000 n 
+0000020689 00000 n 
+0000020817 00000 n 
+0000022729 00000 n 
+trailer
+<< /Size 30 /Root 1 0 R >>
+startxref
+22857
+%%EOF
