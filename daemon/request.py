@@ -42,6 +42,7 @@ class Request:
         "cookies",
         "routes",
         "hook",
+        "connaddr",
     ]
 
     def __init__(self):
@@ -57,6 +58,7 @@ class Request:
         self._raw_body = ""
         self.routes = {}
         self.hook = None
+        self.connaddr = None
 
     def extract_request_line(self, header_text):
         """Parse the HTTP request line into method, URL target and version."""

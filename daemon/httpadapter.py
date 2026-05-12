@@ -159,6 +159,7 @@ class HttpAdapter:
         try:
             msg = self._read_http_message(conn)
             req.prepare(msg, self.routes)
+            req.connaddr = addr
             response = self._dispatch_route(req, resp)
         except ValueError as exc:
             LOGGER.warning("Bad request from %s: %s", addr, exc)
@@ -181,6 +182,7 @@ class HttpAdapter:
         try:
             msg = await self._read_http_message_async(reader)
             req.prepare(msg, self.routes)
+            req.connaddr = addr
             response = await self._dispatch_route_async(req, resp)
         except ValueError as exc:
             LOGGER.warning("Bad async request from %s: %s", addr, exc)
