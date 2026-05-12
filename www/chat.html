@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AsynapRous Chat</title>
+    <link rel="stylesheet" href="/css/chat.css">
+</head>
+<body>
+    <main class="chat-shell">
+        <aside class="sidebar">
+            <header class="brand">
+                <div class="brand-mark">A</div>
+                <div>
+                    <h1>AsynapRous</h1>
+                    <p>Channel chat</p>
+                </div>
+            </header>
+
+            <section class="panel identity">
+                <div class="panel-title">Identity</div>
+                <label class="field-label" for="username">Display name</label>
+                <div class="identity-row">
+                    <input id="username" value="alice" autocomplete="off">
+                    <button id="save-name" type="button">Set</button>
+                </div>
+            </section>
+
+            <section class="panel">
+                <div class="panel-title">
+                    <span>Channels</span>
+                    <span id="channel-count" class="muted">0</span>
+                </div>
+                <div class="channel-actions">
+                    <input id="channel-name" value="general" autocomplete="off" aria-label="Channel name">
+                    <div class="button-row">
+                        <button id="create-channel" type="button">Create</button>
+                        <button id="join-channel" type="button" class="secondary">Join</button>
+                        <button id="leave-channel" type="button" class="ghost">Leave</button>
+                    </div>
+                </div>
+                <nav id="channel-list" class="channel-list" aria-label="Channels"></nav>
+            </section>
+
+            <section class="panel">
+                <div class="panel-title">
+                    <span>Peers</span>
+                    <span id="peer-count" class="muted">0</span>
+                </div>
+                <ul id="peer-list" class="peer-list"></ul>
+            </section>
+        </aside>
+
+        <section class="chat-main">
+            <header class="chat-header">
+                <div>
+                    <div class="eyebrow">Current channel</div>
+                    <h2 id="active-channel"># general</h2>
+                    <p id="status-line">Connected to local chat backend</p>
+                </div>
+                <div id="notifications" class="notifications" aria-live="polite"></div>
+            </header>
+
+            <section id="message-window" class="message-window" aria-live="polite"></section>
+
+            <form id="message-form" class="composer">
+                <input id="message-input" placeholder="Write a message" autocomplete="off">
+                <button type="submit">Send</button>
+            </form>
+        </section>
+    </main>
+
+    <script src="/js/chat.js"></script>
+</body>
+</html>
