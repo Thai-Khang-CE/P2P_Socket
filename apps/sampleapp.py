@@ -50,6 +50,236 @@ ACTIVE_PEER_STATUSES = {"online", "away", "busy"}
 PEERS = {}
 
 
+class PeerNode:
+    """Async peer socket node controlled by REST endpoints."""
+
+    def __init__(self):
+        self.username = "anonymous"
+        self.host = "127.0.0.1"
+        self.port = None
+        self.server = None
+        self.connections = {}
+        self.messages = []
+        self.lock = asyncio.Lock()
+
+    async def start_server(self, username=None, host="127.0.0.1", port=None):
+        if username:
+            self.username = username
+        if not port:
+            return {
+                "listening": self.server is not None,
+                "host": self.host,
+                "port": self.port,
+            }
+
+        port = int(port)
+        if self.server and self.host == host and self.port == port:
+            return {
+                "listening": True,
+                "host": self.host,
+                "port": self.port,
+                "already_running": True,
+            }
+
+        if self.server:
+            self.server.close()
+            await self.server.wait_closed()
+
+        self.host = host
+        self.port = port
+        self.server = await asyncio.start_server(
+            self._handle_incoming_peer,
+            host,
+            port,
+        )
+        return {
+            "listening": True,
+            "host": self.host,
+            "port": self.port,
+            "already_running": False,
+        }
+
+    async def connect(self, username, host, port):
+        port = int(port)
+        key = self.connection_key(host, port)
+        async with self.lock:
+            connection = self.connections.get(key)
+            if connection and not connection["writer"].is_closing():
+                return {
+                    "connected": True,
+                    "duplicate": True,
+                    "peer": key,
+                }
+            self.connections.pop(key, None)
+
+        reader, writer = await asyncio.open_connection(host, port)
+        connection = {
+            "username": username,
+            "host": host,
+            "port": port,
+            "reader": reader,
+            "writer": writer,
+            "direction": "outbound",
+        }
+        async with self.lock:
+            self.connections[key] = connection
+        await self._send_json(
+            writer,
+            {
+                "type": "hello",
+                "from": self.username,
+                "listen_host": self.host,
+                "listen_port": self.port,
+                "timestamp": time.time(),
+            },
+        )
+        asyncio.create_task(self._read_peer_messages(key, reader))
+        return {
+            "connected": True,
+            "duplicate": False,
+            "peer": key,
+        }
+
+    async def send_message(self, username, host, port, message):
+        port = int(port)
+        key = self.connection_key(host, port)
+        connection = await self._ensure_connection(username, host, port)
+        payload = {
+            "type": "message",
+            "from": self.username,
+            "to": username,
+            "message": message,
+            "timestamp": time.time(),
+        }
+
+        try:
+            await self._send_json(connection["writer"], payload)
+        except (ConnectionError, OSError):
+            await self._drop_connection(key)
+            connection = await self._ensure_connection(username, host, port)
+            await self._send_json(connection["writer"], payload)
+
+        return {
+            "sent": True,
+            "peer": key,
+        }
+
+    async def broadcast(self, peers, message):
+        async def send_one(peer):
+            username = peer.get("username", "")
+            host = peer.get("peer_ip") or peer.get("host") or peer.get("ip")
+            port = peer.get("peer_port") or peer.get("port")
+            if not username or not host or not port:
+                return {
+                    "sent": False,
+                    "error": "invalid peer",
+                    "peer": peer,
+                }
+            try:
+                return await self.send_message(username, host, port, message)
+            except (ConnectionError, OSError) as exc:
+                return {
+                    "sent": False,
+                    "error": str(exc),
+                    "peer": self.connection_key(host, port),
+                }
+
+        results = await asyncio.gather(*(send_one(peer) for peer in peers))
+        return results
+
+    async def _ensure_connection(self, username, host, port):
+        key = self.connection_key(host, port)
+        async with self.lock:
+            connection = self.connections.get(key)
+            if connection and not connection["writer"].is_closing():
+                return connection
+        await self.connect(username, host, port)
+        async with self.lock:
+            return self.connections[key]
+
+    async def _handle_incoming_peer(self, reader, writer):
+        addr = writer.get_extra_info("peername")
+        key = self.connection_key(addr[0], addr[1])
+        connection = {
+            "username": None,
+            "host": addr[0],
+            "port": addr[1],
+            "reader": reader,
+            "writer": writer,
+            "direction": "inbound",
+        }
+        async with self.lock:
+            self.connections[key] = connection
+        await self._read_peer_messages(key, reader)
+
+    async def _read_peer_messages(self, key, reader):
+        try:
+            while True:
+                line = await reader.readline()
+                if not line:
+                    break
+                try:
+                    payload = json.loads(line.decode("utf-8"))
+                except json.JSONDecodeError:
+                    continue
+                await self._handle_protocol_message(key, payload)
+        finally:
+            await self._drop_connection(key)
+
+    async def _handle_protocol_message(self, key, payload):
+        message_type = payload.get("type")
+        if message_type == "hello":
+            listen_host = payload.get("listen_host")
+            listen_port = payload.get("listen_port")
+            if listen_host and listen_port:
+                new_key = self.connection_key(listen_host, listen_port)
+                async with self.lock:
+                    connection = self.connections.pop(key, None)
+                    if connection:
+                        connection["username"] = payload.get("from")
+                        connection["host"] = listen_host
+                        connection["port"] = int(listen_port)
+                        self.connections[new_key] = connection
+            return
+
+        if message_type == "message":
+            self.messages.append({
+                "from": payload.get("from"),
+                "to": payload.get("to"),
+                "message": payload.get("message"),
+                "timestamp": payload.get("timestamp", time.time()),
+            })
+
+    async def _send_json(self, writer, payload):
+        writer.write((json.dumps(payload) + "\n").encode("utf-8"))
+        await writer.drain()
+
+    async def _drop_connection(self, key):
+        async with self.lock:
+            connection = self.connections.pop(key, None)
+        if connection:
+            writer = connection["writer"]
+            if not writer.is_closing():
+                writer.close()
+                try:
+                    await writer.wait_closed()
+                except OSError:
+                    pass
+
+    def connection_summary(self):
+        return sorted(self.connections.keys())
+
+    def inbox(self):
+        return list(self.messages)
+
+    @staticmethod
+    def connection_key(host, port):
+        return "{}:{}".format(host, int(port))
+
+
+P2P_NODE = PeerNode()
+
+
 def json_response(body, status=200, headers=None):
     return {
         "status": status,
@@ -373,6 +603,159 @@ def add_list(headers, body, request):
             "message": "Peer updated" if existing else "Peer added",
             "duplicate": existing,
             "peers": peer_list(),
+        }
+    )
+
+
+@app.route("/connect-peer", methods=["POST", "PUT"])
+async def connect_peer(headers, body, request):
+    data = parse_body(body, headers)
+    local_username = data.get("local_username") or data.get("from")
+    local_host = data.get("listen_host", "127.0.0.1")
+    local_port = data.get("listen_port")
+    peer_username = data.get("peer_username") or data.get("username")
+    peer_host = data.get("peer_ip") or data.get("host") or data.get("ip")
+    peer_port = data.get("peer_port") or data.get("port")
+
+    try:
+        server_info = await P2P_NODE.start_server(
+            username=local_username,
+            host=local_host,
+            port=local_port,
+        )
+    except OSError as exc:
+        return json_response(
+            {"error": "Peer server failed", "message": str(exc)},
+            status=502,
+        )
+
+    if not peer_host or not peer_port:
+        return json_response(
+            {
+                "message": "Peer server ready",
+                "server": server_info,
+                "connections": P2P_NODE.connection_summary(),
+            }
+        )
+
+    try:
+        result = await P2P_NODE.connect(peer_username, peer_host, peer_port)
+    except (ConnectionError, OSError) as exc:
+        return json_response(
+            {"error": "Peer unavailable", "message": str(exc)},
+            status=502,
+        )
+
+    return json_response(
+        {
+            "message": "Peer connected",
+            "server": server_info,
+            "connection": result,
+            "connections": P2P_NODE.connection_summary(),
+        }
+    )
+
+
+@app.route("/send-peer", methods=["POST"])
+async def send_peer(headers, body, request):
+    data = parse_body(body, headers)
+    local_username = data.get("local_username") or data.get("from")
+    if local_username:
+        P2P_NODE.username = local_username
+
+    peer_username = data.get("peer_username") or data.get("username")
+    peer_host = data.get("peer_ip") or data.get("host") or data.get("ip")
+    peer_port = data.get("peer_port") or data.get("port")
+    message = data.get("message")
+
+    if not peer_username or not peer_host or not peer_port or message is None:
+        return json_response(
+            {
+                "error": "Bad Request",
+                "message": "peer username, peer_ip, peer_port and message required",
+            },
+            status=400,
+        )
+
+    try:
+        result = await P2P_NODE.send_message(
+            peer_username,
+            peer_host,
+            peer_port,
+            message,
+        )
+    except (ConnectionError, OSError) as exc:
+        return json_response(
+            {"error": "Peer unavailable", "message": str(exc)},
+            status=502,
+        )
+
+    return json_response(
+        {
+            "message": "Direct peer message sent",
+            "result": result,
+            "connections": P2P_NODE.connection_summary(),
+        }
+    )
+
+
+@app.route("/broadcast-peer", methods=["POST"])
+async def broadcast_peer(headers, body, request):
+    data = parse_body(body, headers)
+    local_username = data.get("local_username") or data.get("from")
+    if local_username:
+        P2P_NODE.username = local_username
+
+    message = data.get("message")
+    peers = data.get("peers")
+    if peers is None:
+        peers = peer_list()
+    elif isinstance(peers, str):
+        try:
+            peers = json.loads(peers)
+        except json.JSONDecodeError:
+            peers = []
+
+    if message is None:
+        return json_response(
+            {"error": "Bad Request", "message": "message is required"},
+            status=400,
+        )
+
+    own_port = P2P_NODE.port
+    own_host = P2P_NODE.host
+    targets = [
+        peer
+        for peer in peers
+        if not (
+            str(peer.get("peer_ip") or peer.get("host") or peer.get("ip"))
+            == str(own_host)
+            and int(peer.get("peer_port") or peer.get("port") or 0)
+            == int(own_port or 0)
+        )
+    ]
+
+    results = await P2P_NODE.broadcast(targets, message)
+    return json_response(
+        {
+            "message": "Broadcast complete",
+            "targets": len(targets),
+            "results": results,
+            "connections": P2P_NODE.connection_summary(),
+        }
+    )
+
+
+@app.route("/peer-inbox", methods=["GET"])
+def peer_inbox(headers, body, request):
+    return json_response(
+        {
+            "username": P2P_NODE.username,
+            "listening": P2P_NODE.server is not None,
+            "host": P2P_NODE.host,
+            "port": P2P_NODE.port,
+            "connections": P2P_NODE.connection_summary(),
+            "messages": P2P_NODE.inbox(),
         }
     )
 
