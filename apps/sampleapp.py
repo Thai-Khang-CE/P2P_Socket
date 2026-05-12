@@ -403,6 +403,10 @@ def heartbeat(headers, body, request):
         except (TypeError, ValueError):
             return error_response("peer_port must be integer")
 
+    new_status = data.get("status")
+    if new_status is not None and new_status not in ("online", "away", "busy", "offline"):
+        return error_response("invalid peer status")
+
     refreshed = 0
     for peer in PEERS.values():
         if peer["username"] != session["username"]:
@@ -412,7 +416,8 @@ def heartbeat(headers, body, request):
         if peer_port and peer["peer_port"] != peer_port:
             continue
         peer["last_seen"] = time.time()
-        peer["status"] = data.get("status", peer["status"])
+        if new_status is not None:
+            peer["status"] = new_status
         refreshed += 1
 
     if refreshed == 0:

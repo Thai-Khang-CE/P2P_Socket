@@ -1,10 +1,35 @@
 # CO3094 Hybrid P2P Chat
 
-This repository contains a standard-library-only hybrid chat demo.  The HTTP
-tracker handles login, cookie sessions, peer registration, discovery,
-heartbeat, and leave events.  The tracker does not forward chat messages.
-Each `peer.py` process is one real peer and sends JSON-line messages directly
-to other peers over asyncio TCP sockets.
+This repository contains a standard-library-only hybrid chat demo for the
+CO3093/CO3094 Computer Networks course.  The HTTP tracker handles login,
+cookie sessions, peer registration, discovery, heartbeat, and leave events.
+The tracker does not forward chat messages.  Each `peer.py` process is one
+real peer and sends JSON-line messages directly to other peers over asyncio
+TCP sockets.
+
+## Architecture
+
+```
+Browser (login.html / chat.html)
+  |  fetch /login, /me, /tracker-state, /get-list, /submit-info, /heartbeat, /leave
+  v
+sampleapp.py  (HTTP auth + peer tracker)
+  |  cookie sessions, peer registry, heartbeat TTL
+  v
+peer.py  <--- asyncio TCP --->  peer.py
+  direct messages, broadcast, ACK protocol
+```
+
+- **`apps/sampleapp.py`** is the central HTTP authentication server and peer
+  discovery tracker.  It never forwards chat messages.
+- **`peer.py`** is the real peer process.  Each terminal runs one peer that
+  logs in, registers with the tracker, then sends chat payloads directly to
+  other peers over asyncio TCP sockets using JSON-line framing.
+- **Browser UI** (`www/login.html`, `www/chat.html`) is only a tracker
+  dashboard.  It shows the authenticated user, active peers, and tracker
+  status.  It does not send or receive P2P messages.
+- **`asyncio`** provides non-blocking I/O for the tracker backend, peer TCP
+  server, heartbeat timer, and terminal input.
 
 ## Requirements
 
@@ -13,7 +38,9 @@ to other peers over asyncio TCP sockets.
 - No Flask, FastAPI, Django, requests, websockets, aiohttp, or external
   frontend framework
 
-## Start The Tracker
+## Quick Start
+
+### 1. Start the tracker
 
 PowerShell:
 
@@ -27,37 +54,17 @@ Unix shell:
 python3 start_sampleapp.py --server-ip 127.0.0.1 --server-port 2026
 ```
 
-The tracker exposes:
-
-- `POST /login`
-- `POST /logout`
-- `GET /me`
-- `GET /private`
-- `GET /admin`
-- `POST /submit-info`
-- `GET /get-list`
-- `POST /heartbeat`
-- `POST` or `DELETE /leave`
-- `GET /tracker-state`
-
-## Browser Dashboard Demo
-
-Start the tracker, then open:
+### 2. Open the browser dashboard
 
 ```text
 http://127.0.0.1:2026/login.html
 ```
 
-Log in as `alice` with password `wonderland`.  The browser dashboard at
-`/chat.html` can show the authenticated user, active peers, tracker status,
-and peer registration controls.  To demo the dashboard registration form, use
-peer IP `127.0.0.1`, peer port `9001`, and channel `general`.
+Log in as `alice` with password `wonderland`.  The dashboard at `/chat.html`
+shows the authenticated user, active peers, tracker status, and peer
+registration controls.
 
-Important: the browser UI is only a tracker dashboard and demo helper.  It does
-not send P2P messages.  Direct P2P transport is handled by `peer.py`, and the
-tracker does not forward chat messages.
-
-## Start Three Peers
+### 3. Start three peers
 
 Open three new terminals from the repository root.
 
@@ -77,11 +84,7 @@ python3 peer.py --username bob --password wonderland --listen-port 9002
 python3 peer.py --username charlie --password wonderland --listen-port 9003
 ```
 
-Each peer logs in, preserves the `session_id` cookie, starts a local TCP
-listener with `asyncio.start_server`, and registers its address with the
-tracker.
-
-## Authoritative P2P Demo
+### 4. Demo direct and broadcast chat
 
 In Alice's terminal:
 
@@ -91,44 +94,57 @@ In Alice's terminal:
 /broadcast hello everyone
 ```
 
-Expected result:
+## Expected Output
 
-- Bob receives the direct message from Alice.
-- Bob and Charlie receive the broadcast from Alice.
-- The tracker logs only auth/register/list/heartbeat/leave requests.
-- No server-forwarded chat route is used.
+- `/list` shows bob and charlie with their IP, port, status, and channels.
+- Bob's terminal prints `[direct] alice: hello bob` and Alice sees `ack=True`.
+- Bob and Charlie both print `[broadcast] alice: hello everyone`.
+- Alice sees `broadcast to 2 peer(s): 2 succeeded, 0 failed`.
+- The browser dashboard shows all three peers after refreshing.
+- The tracker server logs only auth, register, list, heartbeat, and leave
+  requests.  No chat message appears in tracker logs.
+
+## Tracker Endpoints
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/login` | No | Authenticate and receive session cookie |
+| POST | `/logout` | No | Clear session cookie |
+| GET | `/me` | Yes | Current user identity |
+| GET | `/private` | Yes | Protected user-only route |
+| GET | `/admin` | Admin | Protected admin-only route |
+| POST | `/submit-info` | Yes | Register or update peer endpoint |
+| GET | `/get-list` | Yes | Active peer list |
+| POST | `/heartbeat` | Yes | Refresh peer presence |
+| POST/DELETE | `/leave` | Yes | Mark peer offline |
+| GET | `/tracker-state` | Yes | Dashboard state payload |
+| GET | `/chat-state` | Yes | Compatibility alias for tracker-state |
+
+Deprecated endpoints (`/connect-peer`, `/send-peer`, `/broadcast-peer`,
+`/peer-inbox`) return HTTP 410 Gone with a message explaining that direct
+chat is implemented by `peer.py`.
 
 ## Peer CLI Commands
 
 ```text
-/help
-/login
-/register
-/list
-/msg <username> <message>
-/broadcast <message>
-/inbox
-/connections
-/heartbeat
-/leave
-/quit
+/help            Show available commands
+/login           Re-authenticate with the tracker
+/register        Re-register peer endpoint
+/list            Show active peers from tracker
+/msg <user> <m>  Send direct message to one peer
+/broadcast <m>   Send broadcast to all other peers
+/inbox           Show received messages
+/connections     Show open inbound connections
+/heartbeat       Manually send heartbeat
+/leave           Notify tracker this peer is leaving
+/quit            Shut down gracefully
 ```
-
-## Architecture
-
-- `apps/sampleapp.py` is the central HTTP tracker and authentication app.
-- `peer.py` is the real peer process for Alice, Bob, Charlie, or another user.
-- The tracker uses cookies to protect `/submit-info`, `/get-list`,
-  `/heartbeat`, `/leave`, and `/tracker-state`.
-- Peers use the tracker only for discovery.
-- Actual chat messages travel over direct TCP peer-to-peer sockets.
-- Peer messages use JSON-line framing, one JSON object followed by `\n`.
-- `asyncio` keeps peer TCP reads, writes, heartbeat, and terminal input from
-  blocking each other.
 
 ## Manual HTTP Checks
 
 Login and capture the returned `Set-Cookie` header:
+
+PowerShell:
 
 ```powershell
 curl -i -X POST http://127.0.0.1:2026/login `
@@ -152,6 +168,46 @@ curl -i http://127.0.0.1:2026/me `
 ```
 
 Unauthenticated protected requests should return `HTTP/1.1 401 Unauthorized`.
+
+## Test Checklist
+
+- [ ] `python -m compileall .` passes with no errors
+- [ ] Login returns `Set-Cookie: session_id=...; Path=/; HttpOnly; SameSite=Lax`
+- [ ] `GET /me` without cookie returns 401
+- [ ] `POST /submit-info` without cookie returns 401
+- [ ] `GET /get-list` without cookie returns 401
+- [ ] `POST /heartbeat` without cookie returns 401
+- [ ] `POST /leave` without cookie returns 401
+- [ ] `GET /tracker-state` without cookie returns 401
+- [ ] `/submit-info` uses username from session, not request body
+- [ ] Direct message between two peers succeeds with ACK
+- [ ] Broadcast reaches all other peers
+- [ ] Tracker logs show no chat message forwarding
+- [ ] Browser dashboard shows peers after registration
+- [ ] Deprecated endpoints return 410 Gone
+
+## Smoke Test
+
+A standard-library-only smoke test is included:
+
+```sh
+python tests/smoke_http.py
+```
+
+It logs in as alice, calls `/me`, registers a peer, fetches the peer list,
+and prints PASS/FAIL for each step.
+
+## Limitations
+
+- All state is in-memory only.  Restarting the tracker clears sessions and
+  peer records.
+- No persistent database.
+- No encryption or TLS.  All HTTP and TCP traffic is plaintext.
+- Designed for local assignment demo on a single machine.
+- Peer discovery requires the tracker to be running.  If the tracker stops,
+  peers cannot discover each other but existing direct connections continue.
+- The browser dashboard is read-only with respect to chat.  It cannot send
+  or receive P2P messages.
 
 ## Checks
 

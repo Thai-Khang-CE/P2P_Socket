@@ -10,13 +10,13 @@
 # while attending the course
 #
 
-from urlparse import urlparse
+from urllib.parse import urlparse, unquote
+
 
 def get_auth_from_url(url):
-    """Given a url with authentication components, extract them into a tuple of
-    username,password.
+    """Extract username and password from a URL with auth components.
 
-    :rtype: (str,str)
+    :rtype: (str, str)
     """
     parsed = urlparse(url)
 

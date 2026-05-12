@@ -516,7 +516,31 @@ class PeerNode:
         elif command.startswith("/broadcast "):
             message = command.split(" ", 1)[1]
             results = await self.broadcast(message)
-            print("broadcast attempted to {} peer(s)".format(len(results)))
+            succeeded = 0
+            failed = 0
+            errors = []
+            for result in results:
+                if isinstance(result, Exception):
+                    failed += 1
+                    errors.append(str(result))
+                elif isinstance(result, dict):
+                    if result.get("ack"):
+                        succeeded += 1
+                    else:
+                        failed += 1
+                        errors.append(
+                            "{}: {}".format(
+                                result.get("peer", "?"),
+                                result.get("error", "no ack"),
+                            )
+                        )
+            print(
+                "broadcast to {} peer(s): {} succeeded, {} failed".format(
+                    len(results), succeeded, failed,
+                )
+            )
+            for error in errors:
+                print("  error: {}".format(error))
         elif command == "/inbox":
             await self.print_inbox()
         elif command == "/connections":
