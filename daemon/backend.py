@@ -39,18 +39,41 @@ Usage Example:
 
 """
 
-import socket
-import threading
-import logging
-
 import asyncio
 import inspect
+import logging
+import socket
+import threading
 
 from .httpadapter import HttpAdapter
 
 LOGGER = logging.getLogger(__name__)
 
 mode_async = "coroutine"
+
+
+def configure_logging():
+    if not logging.getLogger().handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="[%(levelname)s] %(name)s: %(message)s",
+        )
+
+
+def log_routes(routes, label="Route settings"):
+    if not routes:
+        return
+    LOGGER.info(label)
+    for key, value in routes.items():
+        marker = "**ASYNC** " if inspect.iscoroutinefunction(value) else ""
+        LOGGER.info(
+            "   + ('%s', '%s'): %s%s",
+            key[0],
+            key[1],
+            marker,
+            str(value),
+        )
+
 
 def handle_client(ip, port, conn, addr, routes):
     """
@@ -100,38 +123,37 @@ async def handle_client_coroutine(reader, writer, routes=None):
     daemon = HttpAdapter(None, None, None, addr, routes or {})
     await daemon.handle_client_coroutine(reader, writer)
 
+
 async def async_server(ip="0.0.0.0", port=7000, routes=None):
     routes = routes or {}
-    if not logging.getLogger().handlers:
-        logging.basicConfig(
-            level=logging.INFO,
-            format="[%(levelname)s] %(name)s: %(message)s",
-        )
+    configure_logging()
 
     LOGGER.info("asyncio backend listening on %s:%s", ip, port)
-    if routes != {}:
-        LOGGER.info("Async route settings")
-        for key, value in routes.items():
-            isCoFunc = ""
-            if inspect.iscoroutinefunction(value):
-                isCoFunc += "**ASYNC** "
-            LOGGER.info(
-                "   + ('%s', '%s'): %s%s",
-                key[0],
-                key[1],
-                isCoFunc,
-                str(value),
-            )
+    log_routes(routes, label="Async route settings")
 
-    server = await asyncio.start_server(
-        lambda reader, writer: handle_client_coroutine(reader, writer, routes),
-        ip,
-        port,
-    )
+    try:
+        server = await asyncio.start_server(
+            lambda reader, writer: handle_client_coroutine(reader, writer, routes),
+            ip,
+            port,
+            reuse_address=True,
+        )
+    except OSError as exc:
+        LOGGER.error("Cannot bind backend on %s:%s: %s", ip, port, exc)
+        raise
+
     sockets = ", ".join(str(sock.getsockname()) for sock in server.sockets or [])
     LOGGER.info("asyncio.start_server active sockets: %s", sockets)
-    async with server:
-        await server.serve_forever()
+    try:
+        async with server:
+            await server.serve_forever()
+    except asyncio.CancelledError:
+        LOGGER.info("Async backend cancellation requested")
+        raise
+    finally:
+        server.close()
+        await server.wait_closed()
+        LOGGER.info("Async backend closed on %s:%s", ip, port)
     return
 
 
@@ -149,18 +171,17 @@ def run_backend(ip, port, routes):
     # This global variable to configure the asynchrnous mode or not
     global mode_async
 
-    if not logging.getLogger().handlers:
-        logging.basicConfig(
-            level=logging.INFO,
-            format="[%(levelname)s] %(name)s: %(message)s",
-        )
+    configure_logging()
 
     routes = routes or {}
     LOGGER.info("run_backend with routes=%s", routes)
     # Process async stream for registering the service and terminate
     if mode_async == "coroutine":
 
-        asyncio.run(async_server(ip, port, routes))
+        try:
+            asyncio.run(async_server(ip, port, routes))
+        except KeyboardInterrupt:
+            LOGGER.info("Backend stopped by keyboard interrupt")
         return
 
     # Process socket object
@@ -172,19 +193,7 @@ def run_backend(ip, port, routes):
         server.listen(50)
 
         LOGGER.info("Listening on %s:%s", ip, port)
-        if routes != {}:
-            LOGGER.info("Route settings")
-            for key, value in routes.items():
-                isCoFunc = ""
-                if inspect.iscoroutinefunction(value):
-                    isCoFunc += "**ASYNC** "
-                LOGGER.info(
-                    "   + ('%s', '%s'): %s%s",
-                    key[0],
-                    key[1],
-                    isCoFunc,
-                    str(value),
-                )
+        log_routes(routes)
 
         while True:
             # Accept connection
@@ -202,6 +211,8 @@ def run_backend(ip, port, routes):
                 client_thread.start()
 
 
+    except KeyboardInterrupt:
+        LOGGER.info("Backend stopped by keyboard interrupt")
     except socket.error as e:
         LOGGER.error("Socket error: %s", e)
     finally:

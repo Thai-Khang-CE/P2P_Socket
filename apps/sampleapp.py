@@ -53,6 +53,10 @@ CHAT_NEXT_MESSAGE_ID = 1
 DEFAULT_CHANNELS = ("general", "python", "random")
 
 
+def normalize_channel_name(name):
+    return "-".join((name or "general").strip().lower().split()) or "general"
+
+
 class PeerNode:
     """Async peer socket node controlled by REST endpoints."""
 
@@ -275,6 +279,17 @@ class PeerNode:
     def inbox(self):
         return list(self.messages)
 
+    async def disconnect(self, host=None, port=None):
+        if host and port:
+            key = self.connection_key(host, port)
+            await self._drop_connection(key)
+            return [key]
+
+        keys = list(self.connections.keys())
+        for key in keys:
+            await self._drop_connection(key)
+        return keys
+
     @staticmethod
     def connection_key(host, port):
         return "{}:{}".format(host, int(port))
@@ -284,9 +299,7 @@ P2P_NODE = PeerNode()
 
 
 def ensure_channel(name):
-    name = (name or "general").strip().lower()
-    if not name:
-        name = "general"
+    name = normalize_channel_name(name)
     if name not in CHAT_CHANNELS:
         CHAT_CHANNELS[name] = {
             "name": name,
@@ -359,6 +372,10 @@ def json_response(body, status=200, headers=None):
         "body": body,
         "content_type": "application/json; charset=utf-8",
     }
+
+
+def error_response(message, status=400, error="Bad Request"):
+    return json_response({"error": error, "message": message}, status=status)
 
 
 def parse_body(body, headers):
@@ -435,27 +452,15 @@ def register_peer(data, request):
     channels = parse_channels(data.get("channels") or data.get("channel"))
 
     if not username or not peer_ip or not peer_port:
-        return None, json_response(
-            {
-                "error": "Bad Request",
-                "message": "username, peer_ip and peer_port are required",
-            },
-            status=400,
-        )
+        return None, error_response("username, peer_ip and peer_port are required")
 
     try:
         peer_port = int(peer_port)
     except (TypeError, ValueError):
-        return None, json_response(
-            {"error": "Bad Request", "message": "peer_port must be integer"},
-            status=400,
-        )
+        return None, error_response("peer_port must be integer")
 
     if status not in ("online", "away", "busy", "offline"):
-        return None, json_response(
-            {"error": "Bad Request", "message": "invalid peer status"},
-            status=400,
-        )
+        return None, error_response("invalid peer status")
 
     key = peer_key(username, peer_ip, peer_port)
     now = time.time()
@@ -545,10 +550,7 @@ def login(headers, body, request):
     user = USERS.get(username)
 
     if not user or user["password"] != password:
-        return json_response(
-            {"error": "Unauthorized", "message": "Invalid credentials"},
-            status=401,
-        )
+        return error_response("Invalid credentials", status=401, error="Unauthorized")
 
     session_id = create_session(username)
     return json_response(
@@ -649,13 +651,7 @@ def add_list(headers, body, request):
         try:
             peer_port = int(peer_port)
         except (TypeError, ValueError):
-            return json_response(
-                {
-                    "error": "Bad Request",
-                    "message": "valid peer_port is required",
-                },
-                status=400,
-            )
+            return error_response("valid peer_port is required")
         key = peer_key(username, peer_ip, peer_port)
         removed = PEERS.pop(key, None) is not None
         return json_response(
@@ -771,6 +767,30 @@ async def send_peer(headers, body, request):
     )
 
 
+@app.route("/disconnect-peer", methods=["POST", "PUT"])
+async def disconnect_peer(headers, body, request):
+    data = parse_body(body, headers)
+    peer_host = data.get("peer_ip") or data.get("host") or data.get("ip")
+    peer_port = data.get("peer_port") or data.get("port")
+
+    if peer_host or peer_port:
+        if not peer_host or not peer_port:
+            return error_response("peer_ip and peer_port are required together")
+        try:
+            peer_port = int(peer_port)
+        except (TypeError, ValueError):
+            return error_response("peer_port must be integer")
+
+    disconnected = await P2P_NODE.disconnect(peer_host, peer_port)
+    return json_response(
+        {
+            "message": "Peer connections closed",
+            "disconnected": disconnected,
+            "connections": P2P_NODE.connection_summary(),
+        }
+    )
+
+
 @app.route("/broadcast-peer", methods=["POST"])
 async def broadcast_peer(headers, body, request):
     data = parse_body(body, headers)
@@ -789,10 +809,7 @@ async def broadcast_peer(headers, body, request):
             peers = []
 
     if message is None:
-        return json_response(
-            {"error": "Bad Request", "message": "message is required"},
-            status=400,
-        )
+        return error_response("message is required")
 
     own_port = P2P_NODE.port
     own_host = P2P_NODE.host
@@ -835,7 +852,9 @@ def peer_inbox(headers, body, request):
 @app.route("/chat-state", methods=["GET"])
 def chat_state(headers, body, request):
     username = request.query_params.get("username", ["guest"])[0] or "guest"
-    channel_name = request.query_params.get("channel", ["general"])[0]
+    channel_name = normalize_channel_name(
+        request.query_params.get("channel", ["general"])[0]
+    )
     since_id = request.query_params.get("since", ["0"])[0]
     ensure_default_channels()
     ensure_channel(channel_name)["members"].add(username)
@@ -865,7 +884,9 @@ def chat_state(headers, body, request):
 
 @app.route("/chat-history", methods=["GET"])
 def chat_history(headers, body, request):
-    channel_name = request.query_params.get("channel", ["general"])[0]
+    channel_name = normalize_channel_name(
+        request.query_params.get("channel", ["general"])[0]
+    )
     limit = request.query_params.get("limit", ["50"])[0]
     try:
         limit = int(limit)
@@ -884,7 +905,7 @@ def chat_history(headers, body, request):
 def channel_join(headers, body, request):
     data = parse_body(body, headers)
     username = data.get("username", "guest") or "guest"
-    channel_name = data.get("channel", "general") or "general"
+    channel_name = normalize_channel_name(data.get("channel", "general"))
     channel = ensure_channel(channel_name)
     was_member = username in channel["members"]
     channel["members"].add(username)
@@ -903,12 +924,10 @@ def channel_join(headers, body, request):
 def channel_create(headers, body, request):
     data = parse_body(body, headers)
     username = data.get("username", "guest") or "guest"
-    channel_name = data.get("channel", "").strip().lower()
-    if not channel_name:
-        return json_response(
-            {"error": "Bad Request", "message": "channel is required"},
-            status=400,
-        )
+    raw_channel_name = str(data.get("channel", "")).strip()
+    if not raw_channel_name:
+        return error_response("channel is required")
+    channel_name = normalize_channel_name(raw_channel_name)
 
     existed = channel_name in CHAT_CHANNELS
     channel = ensure_channel(channel_name)
@@ -934,7 +953,7 @@ def channel_create(headers, body, request):
 def channel_leave(headers, body, request):
     data = parse_body(body, headers)
     username = data.get("username", "guest") or "guest"
-    channel_name = data.get("channel", "general") or "general"
+    channel_name = normalize_channel_name(data.get("channel", "general"))
     channel = ensure_channel(channel_name)
     was_member = username in channel["members"]
     channel["members"].discard(username)
@@ -953,13 +972,10 @@ def channel_leave(headers, body, request):
 def chat_message(headers, body, request):
     data = parse_body(body, headers)
     username = data.get("username", "guest") or "guest"
-    channel_name = data.get("channel", "general") or "general"
+    channel_name = normalize_channel_name(data.get("channel", "general"))
     text = data.get("message", "").strip()
     if not text:
-        return json_response(
-            {"error": "Bad Request", "message": "message is required"},
-            status=400,
-        )
+        return error_response("message is required")
     ensure_channel(channel_name)["members"].add(username)
     message = add_chat_message(channel_name, username, text)
     return json_response(

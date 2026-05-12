@@ -26,6 +26,7 @@ from urllib.parse import urlparse
 LOGGER = logging.getLogger(__name__)
 BUFFER_SIZE = 4096
 BACKEND_TIMEOUT = 10
+MAX_BODY_BYTES = 1024 * 1024
 
 _ROUND_ROBIN_INDEX = {}
 _ROUND_ROBIN_LOCK = threading.Lock()
@@ -151,9 +152,12 @@ def _content_length_from_headers(header_bytes):
     for line in header_text.split("\r\n")[1:]:
         if line.lower().startswith("content-length:"):
             try:
-                return int(line.split(":", 1)[1].strip())
+                content_length = int(line.split(":", 1)[1].strip())
             except ValueError:
                 raise ValueError("invalid Content-Length")
+            if content_length > MAX_BODY_BYTES:
+                raise ValueError("request body too large")
+            return content_length
     return 0
 
 
@@ -253,6 +257,7 @@ def handle_client(ip, port, conn, addr, routes):
     Handle one proxy client connection.
     """
     try:
+        conn.settimeout(BACKEND_TIMEOUT)
         request = _read_http_message(conn)
         hostname = _extract_host(request)
         LOGGER.info("Incoming request from %s host=%s", addr, hostname)
@@ -279,6 +284,10 @@ def handle_client(ip, port, conn, addr, routes):
     except OSError:
         LOGGER.exception("Proxy socket error while serving %s", addr)
     finally:
+        try:
+            conn.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
         conn.close()
 
 
