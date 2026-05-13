@@ -1,8 +1,72 @@
-<html><body>
-<h1>Login</h1>
-<form method="POST" action="/login">
-  Username: <input name="username" type="text"><br>
-  Password: <input name="password" type="password"><br>
-  <input type="submit" value="Login">
-</form>
-</body></html>
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Hybrid Chat Tracker Login</title>
+    <link rel="stylesheet" href="/css/chat.css">
+</head>
+<body class="login-page">
+    <main class="login-shell">
+        <section class="login-card">
+            <p class="eyebrow">CO3094 Hybrid P2P</p>
+            <h1>Tracker Login</h1>
+            <p class="lede">
+                Sign in to view peer discovery state. Direct chat still runs in
+                <code>peer.py</code> over TCP sockets.
+            </p>
+
+            <form id="login-form" class="stack">
+                <label class="field">
+                    <span>Username</span>
+                    <input id="username" name="username" value="alice" autocomplete="username">
+                </label>
+                <label class="field">
+                    <span>Password</span>
+                    <input id="password" name="password" type="password" value="wonderland" autocomplete="current-password">
+                </label>
+                <button class="button primary" type="submit">Login</button>
+                <p id="login-status" class="form-status" role="status"></p>
+            </form>
+
+            <div class="hint-card">
+                <strong>Demo users</strong>
+                <span>alice, bob, charlie</span>
+                <span>Password: wonderland</span>
+            </div>
+        </section>
+    </main>
+
+    <script>
+    (function () {
+        const form = document.getElementById("login-form");
+        const status = document.getElementById("login-status");
+
+        form.addEventListener("submit", async function (event) {
+            event.preventDefault();
+            status.textContent = "Signing in...";
+            const payload = {
+                username: document.getElementById("username").value.trim(),
+                password: document.getElementById("password").value
+            };
+
+            try {
+                const response = await fetch("/login", {
+                    method: "POST",
+                    credentials: "include",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify(payload)
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.message || "Login failed");
+                }
+                window.location.href = "/chat.html";
+            } catch (error) {
+                status.textContent = error.message;
+            }
+        });
+    }());
+    </script>
+</body>
+</html>

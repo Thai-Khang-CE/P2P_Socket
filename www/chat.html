@@ -3,73 +3,137 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>AsynapRous Chat</title>
+    <title>Hybrid Chat Tracker Dashboard</title>
     <link rel="stylesheet" href="/css/chat.css">
 </head>
 <body>
-    <main class="chat-shell">
+    <main class="dashboard-shell">
         <aside class="sidebar">
-            <header class="brand">
-                <div class="brand-mark">A</div>
+            <div class="brand">
+                <div class="brand-mark">P2P</div>
                 <div>
-                    <h1>AsynapRous</h1>
-                    <p>Channel chat</p>
+                    <h1>Hybrid Chat</h1>
+                    <p>Tracker dashboard</p>
                 </div>
-            </header>
+            </div>
 
-            <section class="panel identity">
-                <div class="panel-title">Identity</div>
-                <label class="field-label" for="username">Display name</label>
-                <div class="identity-row">
-                    <input id="username" value="alice" autocomplete="off">
-                    <button id="save-name" type="button">Set</button>
-                </div>
+            <section class="sidebar-card">
+                <p class="eyebrow">Current user</p>
+                <h2 id="current-user">Loading</h2>
+                <span class="status-pill online">Authenticated</span>
             </section>
 
-            <section class="panel">
-                <div class="panel-title">
-                    <span>Channels</span>
-                    <span id="channel-count" class="muted">0</span>
-                </div>
-                <div class="channel-actions">
-                    <input id="channel-name" value="general" autocomplete="off" aria-label="Channel name">
-                    <div class="button-row">
-                        <button id="create-channel" type="button">Create</button>
-                        <button id="join-channel" type="button" class="secondary">Join</button>
-                        <button id="leave-channel" type="button" class="ghost">Leave</button>
-                    </div>
-                </div>
-                <nav id="channel-list" class="channel-list" aria-label="Channels"></nav>
-            </section>
-
-            <section class="panel">
-                <div class="panel-title">
-                    <span>Peers</span>
-                    <span id="peer-count" class="muted">0</span>
-                </div>
-                <ul id="peer-list" class="peer-list"></ul>
+            <section class="sidebar-card">
+                <p class="eyebrow">Architecture</p>
+                <p>
+                    This web page is only a tracker dashboard. Direct chat
+                    messages are sent by <code>peer.py</code> through TCP
+                    sockets. The tracker does not forward chat messages.
+                </p>
             </section>
         </aside>
 
-        <section class="chat-main">
-            <header class="chat-header">
+        <section class="main-panel">
+            <header class="topbar">
                 <div>
-                    <div class="eyebrow">Current channel</div>
-                    <h2 id="active-channel"># general</h2>
-                    <p id="status-line">Connected to local chat backend</p>
+                    <p class="eyebrow">Discovery server</p>
+                    <h2>Auth, peer list, heartbeat</h2>
                 </div>
-                <div id="notifications" class="notifications" aria-live="polite"></div>
+                <div class="topbar-actions">
+                    <button id="refresh-peers" class="button secondary" type="button">Refresh peers</button>
+                    <button id="logout" class="button ghost" type="button">Logout</button>
+                </div>
             </header>
 
-            <section id="message-window" class="message-window" aria-live="polite"></section>
+            <section class="notice-card">
+                <strong>This web page is only a tracker dashboard.</strong>
+                <span>
+                    Direct chat messages are sent by <code>peer.py</code>
+                    through TCP sockets. The tracker does not forward chat
+                    messages.
+                </span>
+            </section>
 
-            <form id="message-form" class="composer">
-                <input id="message-input" placeholder="Write a message" autocomplete="off">
-                <button type="submit">Send</button>
-            </form>
+            <div class="content-grid">
+                <section class="card">
+                    <div class="card-title">
+                        <div>
+                            <p class="eyebrow">Tracker status</p>
+                            <h3>Session and peer registry</h3>
+                        </div>
+                        <span id="tracker-state" class="status-pill">Checking</span>
+                    </div>
+                    <dl class="metrics">
+                        <div>
+                            <dt>Active peers</dt>
+                            <dd id="peer-count">0</dd>
+                        </div>
+                        <div>
+                            <dt>Channels</dt>
+                            <dd id="channel-count">0</dd>
+                        </div>
+                    </dl>
+                    <p id="tracker-note" class="muted-text"></p>
+                </section>
+
+                <section class="card">
+                    <div class="card-title">
+                        <div>
+                            <p class="eyebrow">Register this terminal peer</p>
+                            <h3>Publish peer.py address</h3>
+                        </div>
+                    </div>
+                    <form id="register-form" class="form-grid">
+                        <label class="field">
+                            <span>Peer IP</span>
+                            <input id="peer-ip" value="127.0.0.1">
+                        </label>
+                        <label class="field">
+                            <span>Peer port</span>
+                            <input id="peer-port" inputmode="numeric" placeholder="9001">
+                        </label>
+                        <label class="field">
+                            <span>Channel</span>
+                            <input id="channel" value="general">
+                        </label>
+                        <div class="button-row">
+                            <button class="button primary" type="submit">Register peer</button>
+                            <button id="heartbeat" class="button secondary" type="button">Heartbeat</button>
+                            <button id="leave" class="button danger" type="button">Leave</button>
+                        </div>
+                    </form>
+                    <p id="action-status" class="form-status" role="status"></p>
+                </section>
+            </div>
+
+            <section class="card">
+                <div class="card-title">
+                    <div>
+                        <p class="eyebrow">Active peers from /get-list</p>
+                        <h3>Discovery results</h3>
+                    </div>
+                </div>
+                <div id="peer-list" class="peer-grid"></div>
+            </section>
+
+            <section class="card">
+                <div class="card-title">
+                    <div>
+                        <p class="eyebrow">Authoritative P2P demo</p>
+                        <h3>Run these in separate terminals</h3>
+                    </div>
+                </div>
+                <pre class="terminal-block"><code>python peer.py --username alice --password wonderland --listen-port 9001
+python peer.py --username bob --password wonderland --listen-port 9002
+python peer.py --username charlie --password wonderland --listen-port 9003
+
+/list
+/msg bob hello bob
+/broadcast hello everyone</code></pre>
+            </section>
         </section>
     </main>
 
-    <script src="/js/chat.js"></script>
+    <script src="/static/js/chat.js"></script>
 </body>
 </html>

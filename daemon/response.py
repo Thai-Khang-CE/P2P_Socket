@@ -42,6 +42,7 @@ class Response:
         404: "Not Found",
         405: "Method Not Allowed",
         408: "Request Timeout",
+        410: "Gone",
         413: "Payload Too Large",
         500: "Internal Server Error",
         502: "Bad Gateway",
@@ -73,20 +74,38 @@ class Response:
         return datetime.datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT")
 
     def _normalise_static_path(self, request_path):
+        """Return a safe local static file path for a request path."""
         path = "/index.html" if request_path == "/" else request_path
         path = path.split("?", 1)[0]
-        if path.startswith("/css/") or path.startswith("/images/"):
+
+        if path.startswith("/static/"):
             root = self.STATIC_ROOTS["static"]
+            relative_path = path[len("/static/"):]
+        elif path.startswith("/js/"):
+            root = self.STATIC_ROOTS["static"]
+            relative_path = path.lstrip("/")
+            static_candidate = os.path.abspath(
+                os.path.normpath(
+                    os.path.join(BASE_DIR, root, relative_path)
+                )
+            )
+            if not os.path.exists(static_candidate):
+                root = self.STATIC_ROOTS["html"]
+        elif path.startswith("/css/") or path.startswith("/images/"):
+            root = self.STATIC_ROOTS["static"]
+            relative_path = path.lstrip("/")
         elif path == "/favicon.ico":
             root = os.path.join(self.STATIC_ROOTS["static"], "images")
+            relative_path = "favicon.ico"
         else:
             root = self.STATIC_ROOTS["html"]
+            relative_path = path.lstrip("/")
 
         root_dir = os.path.abspath(os.path.join(BASE_DIR, root))
         file_path = os.path.abspath(
-            os.path.normpath(os.path.join(root_dir, path.lstrip("/")))
+            os.path.normpath(os.path.join(root_dir, relative_path))
         )
-        if not file_path.startswith(root_dir):
+        if os.path.commonpath([root_dir, file_path]) != root_dir:
             raise ValueError("path traversal blocked")
         return file_path
 
