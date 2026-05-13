@@ -148,16 +148,75 @@ def main():
     check("/tracker-state has peers", "peers" in data)
     print()
 
-    # 9. Deprecated endpoints
+    # 9. Connect-peer (informational discovery, not server forwarding)
+    print("[connect-peer]")
+    # Login bob in a separate session and register his peer endpoint.
+    bob_status, bob_headers, _ = request(
+        "POST", "/login",
+        {"username": "bob", "password": "wonderland"},
+    )
+    bob_cookie = extract_cookie(bob_headers)
+    check("bob login returns 200", bob_status == 200)
+    check("bob login sets cookie", bool(bob_cookie))
+
+    bob_port = 19002
+    status, _, _ = request(
+        "POST", "/submit-info",
+        {"peer_ip": "127.0.0.1", "peer_port": bob_port, "status": "online"},
+        cookie=bob_cookie,
+    )
+    check("bob /submit-info returns 200", status == 200)
+
+    status, _, data = request(
+        "POST", "/connect-peer",
+        {"username": "bob"},
+        cookie=cookie,
+    )
+    check("/connect-peer returns 200", status == 200)
+    check("/connect-peer returns bob", data.get("username") == "bob")
+    check("/connect-peer returns peer_ip 127.0.0.1",
+          data.get("peer_ip") == "127.0.0.1")
+    check("/connect-peer returns expected peer_port",
+          data.get("peer_port") == bob_port)
+
+    status, _, _ = request("POST", "/connect-peer", {}, cookie=cookie)
+    check("/connect-peer with empty body returns 400", status == 400)
+
+    status, _, _ = request(
+        "POST", "/connect-peer",
+        {"username": "no_such_user"},
+        cookie=cookie,
+    )
+    check("/connect-peer with unknown peer returns 404", status == 404)
+
+    status, _, _ = request(
+        "POST", "/connect-peer",
+        {"username": "alice"},
+        cookie=cookie,
+    )
+    check("/connect-peer to self returns 400", status == 400)
+
+    status, _, _ = request("POST", "/connect-peer", {"username": "bob"})
+    check("/connect-peer without cookie returns 401", status == 401)
+
+    # Clean up bob peer record so the rest of the suite is unaffected.
+    request(
+        "POST", "/leave",
+        {"peer_ip": "127.0.0.1", "peer_port": bob_port},
+        cookie=bob_cookie,
+    )
+    print()
+
+    # 10. Deprecated endpoints (must still be rejected)
     print("[deprecated endpoints]")
-    for path in ("/connect-peer", "/send-peer", "/broadcast-peer"):
+    for path in ("/send-peer", "/broadcast-peer"):
         status, _, data = request("POST", path)
         check("{} returns 410".format(path), status == 410)
     status, _, data = request("GET", "/peer-inbox")
     check("/peer-inbox returns 410", status == 410)
     print()
 
-    # 10. Leave
+    # 11. Leave
     print("[leave]")
     status, _, data = request(
         "POST", "/leave",

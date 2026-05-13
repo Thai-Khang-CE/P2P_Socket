@@ -118,12 +118,42 @@ POST /leave         (requires cookie)
 
 GET /tracker-state  (requires cookie)
   returns dashboard state: user, peers, channels
+
+POST /connect-peer  (requires cookie)
+  returns target peer's IP/port/status/channels for connection setup
 ```
 
 The registry is in memory and removes inactive (TTL-expired) or offline
 peers automatically.  The `/submit-info` endpoint always uses the username
 from the authenticated session, never from the request body, preventing
 impersonation.
+
+`/connect-peer` is an optional client-server discovery helper.  It looks up
+the most recently seen active peer for the requested username and returns
+the `peer_ip`, `peer_port`, `status`, and `channels` fields.  It does not
+open a socket and does not transport chat payloads; `peer.py` consumes the
+returned endpoint to open its own direct TCP socket.
+
+### Channel Management
+
+Channels are intentionally lightweight to keep chat transport purely P2P:
+
+- Each peer registers its joined channels with the tracker via
+  `/submit-info` (defaults to `general`).
+- `/tracker-state` exposes the current channel list to the browser
+  dashboard.
+- `/get-list` accepts an optional `channel` query parameter to filter the
+  active peer list.
+- Every P2P payload (`direct`, `broadcast`) carries a `channel` field so
+  receivers can route messages to the correct logical channel.
+- The peer terminal acts as both the message display and the message
+  submission UI (`/inbox`, `/msg`, `/broadcast`).
+- Messages are append-only in each peer's local in-memory inbox; there is
+  no edit or delete command, matching the spec's "messages are immutable
+  once sent" requirement.
+- A richer browser-side chat window was intentionally avoided so that
+  message transport remains exclusively peer-to-peer and never passes
+  through the tracker.
 
 ## 6. Direct P2P Protocol
 
@@ -199,10 +229,13 @@ failed.  Unrelated ACKs are ignored.
 The following endpoints existed in earlier phases when sampleapp.py included
 a server-side P2P node.  They are now rejected with HTTP 410 Gone:
 
-- `POST /connect-peer`
 - `POST /send-peer`
 - `POST /broadcast-peer`
 - `GET /peer-inbox`
+
+Note: `/connect-peer` is **not** deprecated.  It is retained as a
+client-server connection-setup helper that returns target peer endpoint
+data only; it does not transport chat payloads.
 
 ## 7. Async Design
 
