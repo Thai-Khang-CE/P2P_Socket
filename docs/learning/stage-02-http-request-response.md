@@ -470,22 +470,241 @@ if content_length > self.MAX_BODY_BYTES:
 
 ### 5.5 `Request`: raw HTTP text thành object
 
-Sau khi adapter có raw HTTP message text, nó gọi:
+Sau khi `HttpAdapter` đọc đủ bytes từ TCP connection và ghép thành một raw HTTP message string, nó gọi:
 
 ```python
 req.prepare(msg, self.routes)
 ```
 
-Trong `Request.prepare()`:
+Ở đây có 2 input chính:
 
-1. `fetch_headers_body(request)` split message thành `_raw_headers` và `_raw_body`.
-2. `extract_request_line(self._raw_headers)` parse method, target, version.
-3. `prepare_query_params(target)` tách path và query.
-4. `prepare_headers(self._raw_headers)` parse headers.
-5. `prepare_cookies(self.headers.get("Cookie", ""))` parse cookies.
-6. `self.hook = routes.get((self.method, self.path))` tìm route handler.
+1. `msg`: một chuỗi HTTP request hoàn chỉnh, gồm request line, headers, blank line và body nếu có.
+2. `self.routes`: route table của framework, dạng dictionary map từ `(method, path)` sang route handler function.
 
-Sau bước này, adapter không cần xử lý chuỗi raw nữa; nó làm việc với object.
+Output của `req.prepare(...)` không phải là một object mới. Method này mutate chính instance `Request` hiện tại, fill các field của nó, rồi `return self`.
+
+Nói cách khác:
+
+```text
+Input:
+  raw HTTP text + routes table
+
+Output:
+  cùng một Request object, nhưng đã có method/path/headers/body/cookies/hook
+```
+
+Ví dụ input `msg` với request có query, cookie và JSON body:
+
+```http
+POST /submit-info?debug=true HTTP/1.1
+Host: 127.0.0.1:2026
+Content-Type: application/json
+Content-Length: 63
+Cookie: session_id=abc123; theme=dark
+
+{"peer_ip":"127.0.0.1","peer_port":9001,"status":"online"}
+```
+
+Ví dụ input `routes` rút gọn:
+
+```python
+{
+    ("POST", "/login"): login,
+    ("POST", "/submit-info"): submit_info,
+    ("GET", "/get-list"): get_list,
+}
+```
+
+Sau khi chạy:
+
+```python
+req.prepare(msg, routes)
+```
+
+`req` sẽ có trạng thái gần như sau:
+
+```python
+req.method == "POST"
+req.url == "/submit-info?debug=true"
+req.path == "/submit-info"
+req.version == "HTTP/1.1"
+req.headers["Host"] == "127.0.0.1:2026"
+req.headers["Content-Type"] == "application/json"
+req.headers["Content-Length"] == "63"
+req.query_params == {"debug": ["true"]}
+req.cookies == {"session_id": "abc123", "theme": "dark"}
+req.body == '{"peer_ip":"127.0.0.1","peer_port":9001,"status":"online"}'
+req.hook == submit_info
+```
+
+Điểm quan trọng: `Request` chưa parse JSON body thành dictionary. Nó chỉ giữ body là string. Việc hiểu body là JSON hay form-urlencoded thuộc application layer, ví dụ `apps/sampleapp.py:parse_body()`.
+
+Pipeline bên trong `Request.prepare()`:
+
+```python
+self._raw_headers, self._raw_body = self.fetch_headers_body(request)
+self.body = self._raw_body
+self.method, target, self.version = self.extract_request_line(self._raw_headers)
+self.prepare_query_params(target)
+self.headers = self.prepare_headers(self._raw_headers)
+self.cookies = self.prepare_cookies(self.headers.get("Cookie", ""))
+self.routes = routes
+self.hook = routes.get((self.method, self.path))
+return self
+```
+
+Giải thích input/output từng bước:
+
+| Step | Function/line | Input | Output/state after step |
+|---|---|---|---|
+| 1 | `fetch_headers_body(request)` | Toàn bộ raw HTTP message string | `_raw_headers` chứa request line + headers; `_raw_body` chứa phần sau blank line |
+| 2 | `self.body = self._raw_body` | Raw body text | `body` được lưu lại để route handler đọc |
+| 3 | `extract_request_line(self._raw_headers)` | Header block, lấy dòng đầu tiên | `method`, `target`, `version` |
+| 4 | `prepare_query_params(target)` | Target như `/submit-info?debug=true` | `url`, `path`, `query_params` |
+| 5 | `prepare_headers(self._raw_headers)` | Header block | `headers` là `CaseInsensitiveDict` |
+| 6 | `prepare_cookies(...)` | Giá trị header `Cookie` | `cookies` là dict thường |
+| 7 | `self.routes = routes` | Route table từ framework | Request giữ lại route table để debug/compatibility |
+| 8 | `routes.get((self.method, self.path))` | Method + path đã parse | `hook` là function handler hoặc `None` |
+
+Ví dụ cụ thể cho step 1:
+
+Input:
+
+```text
+POST /submit-info?debug=true HTTP/1.1\r\n
+Host: 127.0.0.1:2026\r\n
+Content-Type: application/json\r\n
+Content-Length: 63\r\n
+Cookie: session_id=abc123; theme=dark\r\n
+\r\n
+{"peer_ip":"127.0.0.1","peer_port":9001,"status":"online"}
+```
+
+Output của `fetch_headers_body()`:
+
+```python
+header_text = (
+    "POST /submit-info?debug=true HTTP/1.1\r\n"
+    "Host: 127.0.0.1:2026\r\n"
+    "Content-Type: application/json\r\n"
+    "Content-Length: 63\r\n"
+    "Cookie: session_id=abc123; theme=dark"
+)
+
+body = '{"peer_ip":"127.0.0.1","peer_port":9001,"status":"online"}'
+```
+
+Ví dụ cụ thể cho step 3:
+
+Input của `extract_request_line()` là `header_text`. Function lấy dòng đầu:
+
+```text
+POST /submit-info?debug=true HTTP/1.1
+```
+
+Output:
+
+```python
+method = "POST"
+target = "/submit-info?debug=true"
+version = "HTTP/1.1"
+```
+
+Ví dụ cụ thể cho step 4:
+
+Input:
+
+```text
+/submit-info?debug=true
+```
+
+Output/state:
+
+```python
+self.url = "/submit-info?debug=true"
+self.path = "/submit-info"
+self.query_params = {"debug": ["true"]}
+```
+
+Vì route lookup dùng `self.path`, query string không làm mất route. `POST /submit-info?debug=true` vẫn match `("POST", "/submit-info")`.
+
+Ví dụ cụ thể cho step 5:
+
+Input là các dòng header:
+
+```http
+Host: 127.0.0.1:2026
+Content-Type: application/json
+Content-Length: 63
+Cookie: session_id=abc123; theme=dark
+```
+
+Output:
+
+```python
+self.headers = {
+    "Host": "127.0.0.1:2026",
+    "Content-Type": "application/json",
+    "Content-Length": "63",
+    "Cookie": "session_id=abc123; theme=dark",
+}
+```
+
+Thực tế object là `CaseInsensitiveDict`, không phải dict thường. Vì vậy `self.headers.get("cookie")` và `self.headers.get("Cookie")` nên cùng truy được giá trị.
+
+Ví dụ cụ thể cho step 6:
+
+Input:
+
+```text
+session_id=abc123; theme=dark
+```
+
+Output:
+
+```python
+self.cookies = {
+    "session_id": "abc123",
+    "theme": "dark",
+}
+```
+
+Ví dụ cụ thể cho step 8:
+
+Input:
+
+```python
+self.method = "POST"
+self.path = "/submit-info"
+routes = {
+    ("POST", "/submit-info"): submit_info,
+}
+```
+
+Output:
+
+```python
+self.hook = submit_info
+```
+
+Nếu route không tồn tại:
+
+```python
+self.hook = None
+```
+
+Sau bước này, adapter không cần xử lý chuỗi raw nữa. Nó có thể hỏi object:
+
+```python
+req.method
+req.path
+req.headers
+req.body
+req.cookies
+req.hook
+```
+
+Đây là ý nghĩa cốt lõi của `Request`: biến HTTP text khó thao tác thành một object có field rõ ràng, để phần dispatch route không phải tự split string thủ công.
 
 ### 5.6 Where request line is parsed
 
