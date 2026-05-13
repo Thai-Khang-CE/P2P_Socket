@@ -118,6 +118,50 @@ Returns:
 
 Compatibility alias for `/tracker-state`.  Returns the same payload.
 
+## Connection Setup
+
+### `POST /connect-peer`
+
+Requires a valid `session_id` cookie.
+
+Returns the registered endpoint of a target peer so the caller can open a
+direct TCP socket from `peer.py`.  This endpoint is informational only: it
+does not open any socket and does not forward chat messages.
+
+Fields (any one of):
+
+- `username` — preferred field name
+- `peer` — alias
+- `target` — alias
+
+Optional:
+
+- `channel` — restrict lookup to peers that registered the channel
+
+Response (success):
+
+```json
+{
+  "username": "bob",
+  "peer_ip": "127.0.0.1",
+  "peer_port": 9002,
+  "status": "online",
+  "channels": ["general"],
+  "last_seen": 1234567890,
+  "note": "Use this endpoint information to open a direct TCP socket from peer.py. The tracker does not forward chat messages."
+}
+```
+
+Errors:
+
+- `400` if no target is supplied, or if the target equals the current user
+- `401` if the session cookie is missing or expired
+- `404` if no active peer is registered for the target username
+
+The returned `peer_ip` and `peer_port` are consumed by `peer.py`, which then
+opens a direct TCP socket to the target peer.  The tracker is never on the
+chat data path.
+
 ## Deprecated Endpoints (HTTP 410 Gone)
 
 The following endpoints existed in earlier phases when the tracker forwarded
@@ -132,7 +176,6 @@ retained only for compatibility and always return:
 }
 ```
 
-- `POST /connect-peer` — rejected
 - `POST /send-peer` — rejected
 - `POST /broadcast-peer` — rejected
 - `GET /peer-inbox` — rejected

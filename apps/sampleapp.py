@@ -214,6 +214,29 @@ def channel_list():
     return sorted(CHAT_CHANNELS)
 
 
+def find_peer_by_username(username, channel=None):
+    """Return the most recently seen active peer for ``username``.
+
+    The lookup ignores offline records and expired entries.  When ``channel``
+    is provided, only peers that registered the channel are considered.
+    Returns ``None`` if no active peer is registered for the user.
+    """
+    cleanup_inactive_peers()
+    candidates = []
+    for peer in PEERS.values():
+        if peer["username"] != username:
+            continue
+        if peer["status"] not in ACTIVE_PEER_STATUSES:
+            continue
+        if channel and channel not in peer["channels"]:
+            continue
+        candidates.append(peer)
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item["last_seen"], reverse=True)
+    return peer_to_public(candidates[0])
+
+
 def tracker_state_payload(session):
     """Return tracker-only dashboard state for the browser UI."""
     return {
@@ -482,8 +505,45 @@ def legacy_peer_response():
 
 @app.route("/connect-peer", methods=["POST"])
 def connect_peer(headers, body, request):
-    """Reject legacy server-global P2P connection attempts."""
-    return legacy_peer_response()
+    """Return target peer endpoint information for direct connection setup.
+
+    This endpoint is purely informational.  It does not open any socket and
+    does not forward chat messages.  ``peer.py`` consumes the returned
+    ``peer_ip``/``peer_port`` to open its own direct TCP connection.
+    """
+    session, error = require_user(request)
+    if error:
+        return error
+
+    data = parse_body(body, headers)
+    target = (
+        data.get("username")
+        or data.get("peer")
+        or data.get("target")
+    )
+    target = str(target).strip() if target else ""
+    if not target:
+        return error_response("username or peer target is required")
+
+    if target == session["username"]:
+        return error_response("cannot connect to self")
+
+    channel = data.get("channel")
+    channel = str(channel).strip() if channel else None
+    peer = find_peer_by_username(target, channel=channel)
+    if not peer:
+        return error_response(
+            "target peer is not registered",
+            status=404,
+            error="Not Found",
+        )
+
+    payload = dict(peer)
+    payload["note"] = (
+        "Use this endpoint information to open a direct TCP socket from "
+        "peer.py. The tracker does not forward chat messages."
+    )
+    return json_response(payload)
 
 
 @app.route("/send-peer", methods=["POST"])

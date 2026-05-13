@@ -119,10 +119,23 @@ In Alice's terminal:
 | POST/DELETE | `/leave` | Yes | Mark peer offline |
 | GET | `/tracker-state` | Yes | Dashboard state payload |
 | GET | `/chat-state` | Yes | Compatibility alias for tracker-state |
+| POST | `/connect-peer` | Yes | Return target peer endpoint for connection setup |
 
-Deprecated endpoints (`/connect-peer`, `/send-peer`, `/broadcast-peer`,
-`/peer-inbox`) return HTTP 410 Gone with a message explaining that direct
-chat is implemented by `peer.py`.
+Deprecated endpoints (`/send-peer`, `/broadcast-peer`, `/peer-inbox`) return
+HTTP 410 Gone with a message explaining that direct chat is implemented by
+`peer.py`.  `/connect-peer` is **not** deprecated; it returns the target
+peer's `peer_ip` and `peer_port` so `peer.py` can open the direct TCP
+socket itself.  The tracker never forwards chat messages.
+
+Example:
+
+```text
+POST /connect-peer
+Body: {"username": "bob"}
+
+Returns bob's peer_ip and peer_port; peer.py then opens the direct TCP
+socket.  The tracker does not forward chat messages.
+```
 
 ## Peer CLI Commands
 
